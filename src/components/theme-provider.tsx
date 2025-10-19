@@ -15,7 +15,7 @@ const ThemeContext = createContext<ThemeContextType | null>(null)
 
 export function ThemeProvider({
   children,
-  defaultTheme = "system",
+  defaultTheme = "light",
   value: _value,
   ...props
 }: ThemeProviderProps) {

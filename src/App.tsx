@@ -43,7 +43,7 @@ const App = () => {
   }, []);
   
   return (
-    <ThemeProvider defaultTheme="dark">
+    <ThemeProvider defaultTheme="light">
       <QueryClientProvider client={queryClient}>
         <TooltipProvider>
           <DatabaseProvider>
