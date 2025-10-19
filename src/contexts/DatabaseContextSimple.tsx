@@ -1,0 +1,1240 @@
+import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react'
+import { User, Contact, ChangelogEntry, UserRole } from '../types'
+import { superAdminService, testSupabaseConnection, supabase } from '../lib/supabase'
+import { toast } from '../hooks/use-toast'
+
+// Database contact interface for real-time events
+interface DatabaseContact {
+  first_name: string
+  last_name: string
+  [key: string]: unknown
+}
+
+// Simple mock context for debugging
+interface DatabaseContextType {
+  users: User[]
+  contacts: Contact[]
+  changelog: ChangelogEntry[]
+  loading: boolean
+  usersLoading: boolean
+  contactsLoading: boolean
+  changelogLoading: boolean
+  currentUser: User | null
+  refreshUsers: () => Promise<void>
+  refreshContacts: () => Promise<void>
+  refreshChangelog: () => Promise<void>
+  syncContactsToDatabase: () => Promise<void>
+  createUser: (userData: Omit<User, 'id'>) => Promise<User>
+  updateUser: (id: string, userData: Partial<Omit<User, 'id'>>) => Promise<User>
+  deleteUser: (id: string) => Promise<void>
+  login: (email: string, password: string) => Promise<User | null>
+  logout: () => Promise<void>
+  createContact: (contactData: Omit<Contact, 'id' | 'ownerId' | 'ownerName' | 'createdAt'>) => Promise<Contact>
+  updateContact: (id: string, contactData: Partial<Omit<Contact, 'id'>>) => Promise<Contact>
+  deleteContact: (id: string) => Promise<void>
+  logAction: (
+    action: ChangelogEntry['action'],
+    entity: ChangelogEntry['entity'],
+    description: string,
+    entityId?: string,
+    entityName?: string,
+    details?: string
+  ) => Promise<void>
+  // SuperAdmin functions
+  createUserBySuperAdmin: (userData: {
+    email: string
+    password: string
+    name: string
+    username: string
+    employeeNumber: string
+    position: string
+    role: User['role']
+  }) => Promise<User>
+  resetUserPassword: (userId: string, newPassword: string) => Promise<void>
+  generateUsername: (name: string, employeeNumber: string) => Promise<string>
+}
+
+const DatabaseContext = createContext<DatabaseContextType | null>(null)
+
+interface DatabaseProviderProps {
+  children: ReactNode
+}
+
+export const DatabaseProvider: React.FC<DatabaseProviderProps> = ({ children }) => {
+  console.log('DatabaseProvider: Rendering...')
+  
+  const [users, setUsers] = useState<User[]>([])
+  const [contacts, setContacts] = useState<Contact[]>([])
+  const [changelog, setChangelog] = useState<ChangelogEntry[]>([])
+  
+  const [loading, setLoading] = useState(false)
+  const [usersLoading, setUsersLoading] = useState(false)
+  const [contactsLoading, setContactsLoading] = useState(false)
+  const [changelogLoading, setChangelogLoading] = useState(false)
+  
+  const [currentUser, setCurrentUser] = useState<User | null>(null)
+
+  console.log('DatabaseProvider: Current user:', currentUser)
+
+  // Test Supabase connection on mount and set up real-time subscriptions
+  useEffect(() => {
+    const testConnection = async () => {
+      const isConnected = await testSupabaseConnection()
+      if (isConnected) {
+        console.log('✅ Supabase database connection is working')
+      } else {
+        console.error('❌ Supabase database connection failed')
+      }
+    }
+    testConnection()
+    
+    // Set up real-time subscription for contacts
+    let contactsSubscription: ReturnType<typeof supabase.channel> | null = null
+    
+    if (currentUser && superAdminService) {
+      console.log('Setting up real-time contact subscription for user:', currentUser.name)
+      
+      // Subscribe to changes in the contacts table
+      contactsSubscription = supabase
+        .channel('contacts-realtime')
+        .on(
+          'postgres_changes',
+          {
+            event: '*', // Listen to all events (INSERT, UPDATE, DELETE)
+            schema: 'public',
+            table: 'contacts'
+          },
+          async (payload) => {
+            console.log('🔄 Real-time contact change detected:', payload)
+            
+            // Refresh contacts to get the latest data
+            try {
+              const userId = currentUser.role === 'user' ? currentUser.id : undefined
+              const result = await superAdminService.getContacts(userId)
+              
+              if (result && result.success && result.contacts) {
+                console.log('📡 Real-time sync - contacts updated:', result.contacts.length)
+                setContacts(result.contacts)
+                localStorage.setItem('contacts', JSON.stringify(result.contacts))
+                
+                // Log the real-time update
+                const eventType = payload.eventType
+                const contactData = payload.new || payload.old
+                const contactName = contactData && typeof contactData === 'object' && 'first_name' in contactData && 'last_name' in contactData
+                  ? `${(contactData as DatabaseContact).first_name} ${(contactData as DatabaseContact).last_name}` 
+                  : 'Unknown'
+                
+                console.log(`📡 Real-time: Contact ${contactName} was ${eventType.toLowerCase()}d by another user`)
+                
+                // Show toast notification for real-time updates
+                const eventActions = {
+                  INSERT: 'created',
+                  UPDATE: 'updated', 
+                  DELETE: 'deleted'
+                }
+                const actionText = eventActions[eventType as keyof typeof eventActions] || eventType.toLowerCase()
+                
+                toast({
+                  title: "📡 Real-time Update",
+                  description: `Contact "${contactName}" was ${actionText} by another user`,
+                  duration: 3000,
+                })
+              }
+            } catch (error) {
+              console.error('Error in real-time contact sync:', error)
+            }
+          }
+        )
+        .subscribe((status) => {
+          console.log('Real-time subscription status:', status)
+        })
+    }
+    
+    // Set up periodic sync every 5 minutes as backup
+    const syncInterval = setInterval(async () => {
+      if (currentUser && superAdminService) {
+        console.log('Running periodic contact sync...')
+        try {
+          // Get latest contacts from database
+          const userId = currentUser.role === 'user' ? currentUser.id : undefined
+          const result = await superAdminService.getContacts(userId)
+          
+          if (result && result.success && result.contacts) {
+            console.log('Periodic sync - contacts fetched:', result.contacts.length)
+            setContacts(result.contacts)
+            localStorage.setItem('contacts', JSON.stringify(result.contacts))
+          }
+        } catch (error) {
+          console.warn('Periodic sync failed:', error)
+        }
+      }
+    }, 5 * 60 * 1000) // 5 minutes
+    
+    // Cleanup on unmount
+    return () => {
+      clearInterval(syncInterval)
+      if (contactsSubscription) {
+        console.log('Cleaning up real-time subscription')
+        contactsSubscription.unsubscribe()
+      }
+    }
+  }, [currentUser])
+
+  // Restore user session from localStorage on mount
+  useEffect(() => {
+    try {
+      const savedUser = localStorage.getItem('currentUser')
+      if (savedUser) {
+        const user = JSON.parse(savedUser)
+        console.log('Restoring user session from localStorage:', user.name)
+        setCurrentUser(user)
+      } else {
+        console.log('No saved user session found')
+      }
+    } catch (error) {
+      console.warn('Failed to restore user from localStorage:', error)
+      // Clear invalid data
+      localStorage.removeItem('currentUser')
+    }
+  }, [])
+
+  // Load users and contacts from Supabase on initialization and handle pending syncs
+  useEffect(() => {
+    const loadDataFromSupabase = async () => {
+      if (currentUser) {
+        // Check for pending contact syncs first
+        try {
+          const pendingSync = localStorage.getItem('pendingContactSync')
+          if (pendingSync) {
+            console.log('Found pending contact sync operations:', pendingSync)
+            const pendingOperations = JSON.parse(pendingSync)
+            
+            // Try to sync pending operations
+            for (const operation of pendingOperations) {
+              if (operation.action === 'create' && operation.contact) {
+                try {
+                  console.log('Retrying contact creation:', operation.contact.firstName, operation.contact.lastName)
+                  const result = await superAdminService.createContact({
+                    firstName: operation.contact.firstName,
+                    middleName: operation.contact.middleName,
+                    lastName: operation.contact.lastName,
+                    birthday: operation.contact.birthday,
+                    contactNumber: operation.contact.contactNumber,
+                    company: operation.contact.company,
+                    userId: operation.contact.ownerId
+                  })
+                  
+                  if (result && result.success) {
+                    console.log('Successfully synced pending contact:', result.contact_id)
+                    // Update the contact with the real database ID in localStorage
+                    const storedContacts = localStorage.getItem('contacts')
+                    if (storedContacts) {
+                      const contacts = JSON.parse(storedContacts)
+                      const updatedContacts = contacts.map(c => 
+                        c.id === operation.contact.id ? { ...c, id: result.contact_id } : c
+                      )
+                      localStorage.setItem('contacts', JSON.stringify(updatedContacts))
+                    }
+                  }
+                } catch (error) {
+                  console.warn('Failed to sync pending contact, will retry later:', error)
+                }
+              }
+            }
+            
+            // Clear pending sync after attempting all operations
+            localStorage.removeItem('pendingContactSync')
+          }
+        } catch (error) {
+          console.warn('Error processing pending sync operations:', error)
+        }
+        
+        // Load users for admin/superadmin
+        if (currentUser.role === 'admin' || currentUser.role === 'superadmin') {
+          try {
+            console.log('Loading users from Supabase...')
+            const supabaseUsers = await superAdminService.getAllUsers()
+            
+            if (supabaseUsers && supabaseUsers.length > 0) {
+              const convertedUsers: User[] = supabaseUsers.map(dbUser => ({
+                id: dbUser.id,
+                name: dbUser.name,
+                email: dbUser.email,
+                username: dbUser.username,
+                password: '', // Never expose password
+                role: dbUser.role as UserRole,
+                position: dbUser.position,
+                employeeNumber: dbUser.employee_number,
+                avatar: dbUser.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(dbUser.name)}&background=3b82f6&color=fff`
+              }))
+              
+              console.log('Loaded users from Supabase:', convertedUsers.length)
+              setUsers(convertedUsers)
+            }
+          } catch (error) {
+            console.warn('Failed to load users from Supabase, using local data:', error)
+          }
+        }
+        
+        // Load contacts for all users
+        try {
+          console.log('Loading contacts from Supabase...')
+          console.log('Current user role:', currentUser.role)
+          console.log('Current user ID:', currentUser.id)
+          
+          // For regular users, fetch only their contacts
+          // For admins and superadmins, fetch all contacts
+          const userId = currentUser.role === 'user' ? currentUser.id : undefined
+          console.log('Fetching contacts with userId filter:', userId)
+          
+          const contactsResult = await superAdminService.getContacts(userId)
+          console.log('Raw Supabase contacts result:', contactsResult)
+          
+          if (contactsResult && contactsResult.success && contactsResult.contacts) {
+            console.log('Loaded contacts from Supabase:', contactsResult.contacts.length)
+            console.log('Sample contact data:', contactsResult.contacts[0])
+            
+            // Verify the data structure is correct
+            if (Array.isArray(contactsResult.contacts) && contactsResult.contacts.length > 0) {
+              const sampleContact = contactsResult.contacts[0]
+              console.log('Contact structure verification:', {
+                hasId: !!sampleContact.id,
+                hasFirstName: !!sampleContact.firstName,
+                hasLastName: !!sampleContact.lastName,
+                hasOwnerId: !!sampleContact.ownerId,
+                hasOwnerName: !!sampleContact.ownerName,
+                sampleOwnerId: sampleContact.ownerId,
+                currentUserId: currentUser.id,
+                isPersonalContact: sampleContact.ownerId === currentUser.id
+              })
+            }
+            
+            setContacts(contactsResult.contacts)
+            
+            // Also store in localStorage as backup
+            localStorage.setItem('contacts', JSON.stringify(contactsResult.contacts))
+            console.log('Contacts saved to localStorage and state updated')
+          } else {
+            console.log('No contacts returned or error occurred:', contactsResult)
+            console.log('Loading from localStorage as fallback...')
+            const storedContacts = localStorage.getItem('contacts')
+            if (storedContacts) {
+              const parsedContacts = JSON.parse(storedContacts)
+              console.log('Loaded contacts from localStorage:', parsedContacts.length)
+              setContacts(parsedContacts)
+            } else {
+              console.log('No contacts in localStorage either')
+              setContacts([])
+            }
+          }
+        } catch (error) {
+          console.warn('Failed to load contacts from Supabase, using localStorage:', error)
+          // Fallback to localStorage
+          const storedContacts = localStorage.getItem('contacts')
+          if (storedContacts) {
+            const parsedContacts = JSON.parse(storedContacts)
+            console.log('Fallback: Loaded contacts from localStorage:', parsedContacts.length)
+            setContacts(parsedContacts)
+          } else {
+            console.log('Fallback: No contacts available anywhere')
+            setContacts([])
+          }
+        }
+
+        // Load changelog from database (for admin and superadmin users)
+        if (currentUser.role === 'admin' || currentUser.role === 'superadmin') {
+          try {
+            console.log('Loading changelog from database for admin/superadmin user...')
+            await loadChangelogFromDatabase()
+          } catch (error) {
+            console.warn('Failed to load changelog from database:', error)
+          }
+        } else {
+          console.log('Regular user - changelog not loaded')
+        }
+      }
+    }
+
+    // Load data when component mounts or user changes
+    loadDataFromSupabase()
+  }, [currentUser]) // Depend on currentUser to reload when user changes
+
+  // Simple mock implementations
+  const refreshUsers = async () => { console.log('refreshUsers called') }
+  const refreshContacts = async () => { 
+    console.log('refreshContacts called')
+    if (!currentUser) {
+      console.log('No current user, skipping contact refresh')
+      return
+    }
+    
+    if (!superAdminService) {
+      console.log('No Supabase service, loading from localStorage')
+      const storedContacts = localStorage.getItem('contacts')
+      if (storedContacts) {
+        setContacts(JSON.parse(storedContacts))
+      }
+      return
+    }
+    
+    try {
+      setContactsLoading(true)
+      console.log('Fetching contacts from database for user:', currentUser.id)
+      
+      // For regular users, fetch only their contacts
+      // For admins and superadmins, fetch all contacts
+      const userId = currentUser.role === 'user' ? currentUser.id : undefined
+      const result = await superAdminService.getContacts(userId)
+      
+      if (result && result.success && result.contacts) {
+        console.log('Contacts fetched successfully:', result.contacts)
+        setContacts(result.contacts)
+        
+        // Also store in localStorage as backup
+        localStorage.setItem('contacts', JSON.stringify(result.contacts))
+      } else {
+        console.warn('No contacts returned or error occurred:', result)
+        setContacts([])
+      }
+    } catch (error) {
+      console.error('Error fetching contacts:', error)
+      // Fallback to localStorage
+      const storedContacts = localStorage.getItem('contacts')
+      if (storedContacts) {
+        setContacts(JSON.parse(storedContacts))
+      }
+    } finally {
+      setContactsLoading(false)
+    }
+  }
+  const syncContactsToDatabase = async () => {
+    if (!currentUser || !superAdminService) {
+      console.log('Cannot sync - no user or Supabase service unavailable')
+      return
+    }
+    
+    console.log('Manual contact sync triggered...')
+    try {
+      // Get latest contacts from database
+      const userId = currentUser.role === 'user' ? currentUser.id : undefined
+      const result = await superAdminService.getContacts(userId)
+      
+      if (result && result.success && result.contacts) {
+        console.log('Manual sync successful - contacts:', result.contacts.length)
+        setContacts(result.contacts)
+        localStorage.setItem('contacts', JSON.stringify(result.contacts))
+        
+        // Check for any pending sync operations and clear them if data matches
+        const pendingSync = localStorage.getItem('pendingContactSync')
+        if (pendingSync) {
+          console.log('Clearing resolved pending sync operations')
+          localStorage.removeItem('pendingContactSync')
+        }
+      } else {
+        console.warn('Manual sync failed:', result?.error)
+      }
+    } catch (error) {
+      console.error('Manual sync error:', error)
+    }
+  }
+  
+  const refreshChangelog = async () => { 
+    console.log('refreshChangelog called - loading from database')
+    await loadChangelogFromDatabase()
+  }
+  
+  const createUser = async (userData: Omit<User, 'id'>): Promise<User> => {
+    const newUser = { ...userData, id: Date.now().toString() }
+    setUsers(prev => [...prev, newUser])
+    return newUser
+  }
+  
+  const updateUser = async (id: string, userData: Partial<Omit<User, 'id'>>): Promise<User> => {
+    console.log('Updating user via SuperAdmin:', id, userData)
+    
+    // Check if current user is superadmin or admin
+    if (!currentUser || (currentUser.role !== 'superadmin' && currentUser.role !== 'admin')) {
+      throw new Error('Only SuperAdmin or Admin can update users')
+    }
+
+    try {
+      // If Supabase service is available, try to update in database first
+      if (superAdminService) {
+        console.log('Updating user in Supabase database:', id)
+        
+        const result = await superAdminService.updateUser(id, {
+          email: userData.email,
+          name: userData.name,
+          username: userData.username,
+          employee_number: userData.employeeNumber,
+          position: userData.position,
+          role: userData.role
+        })
+
+        console.log('Supabase updateUser result:', result)
+
+        if (result && result.success) {
+          console.log('User successfully updated in Supabase database')
+        } else {
+          console.warn('Supabase update returned success=false, continuing with local update')
+        }
+      }
+    } catch (error) {
+      console.error('Error updating user in Supabase:', error)
+      // Continue with local update even if Supabase fails
+    }
+
+    // Update local state regardless of Supabase result
+    const updatedUser = { ...users.find(u => u.id === id)!, ...userData }
+    setUsers(prev => prev.map(u => u.id === id ? updatedUser : u))
+    
+    return updatedUser
+  }
+  
+  const deleteUser = async (id: string): Promise<void> => {
+    setUsers(prev => prev.filter(u => u.id !== id))
+  }
+  
+  const login = async (email: string, password: string): Promise<User | null> => {
+    console.log('Login attempt:', email)
+    
+    // First, try to authenticate against the database users
+    if (superAdminService) {
+      try {
+        console.log('Attempting database authentication...')
+        const authResult = await superAdminService.authenticateUser(email, password)
+        
+        if (authResult && authResult.success && authResult.user) {
+          console.log('Database authentication successful for:', authResult.user.name)
+          
+          // Convert database user to app user format
+          const authenticatedUser: User = {
+            id: authResult.user.id,
+            name: authResult.user.name,
+            email: authResult.user.email,
+            username: authResult.user.username,
+            password: '', // Never store password in frontend
+            role: authResult.user.role as UserRole,
+            position: authResult.user.position,
+            employeeNumber: authResult.user.employee_number,
+            avatar: authResult.user.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(authResult.user.name)}&background=3b82f6&color=fff`
+          }
+          
+          setCurrentUser(authenticatedUser)
+          // Persist user session to localStorage
+          localStorage.setItem('currentUser', JSON.stringify(authenticatedUser))
+          await logAction('login', 'system', `User ${authenticatedUser.name} logged in from database`, authenticatedUser.id, authenticatedUser.name)
+          
+          return authenticatedUser
+        } else {
+          console.log('Database authentication failed:', authResult?.error || 'Invalid credentials')
+          
+          // Debug the user to see if they exist
+          try {
+            const debugResult = await superAdminService.debugUserAuth(email)
+            console.log('Debug user info:', debugResult)
+            
+            if (debugResult && debugResult.found) {
+              console.log('User exists in database but password verification failed')
+              console.log('User details:', {
+                email: debugResult.email,
+                name: debugResult.name,
+                role: debugResult.role,
+                hasPasswordHash: debugResult.has_password_hash,
+                passwordHashLength: debugResult.password_hash_length
+              })
+            } else {
+              console.log('User not found in database')
+            }
+          } catch (debugError) {
+            console.warn('Debug failed:', debugError)
+          }
+        }
+      } catch (error) {
+        console.warn('Database authentication error, falling back to default users:', error)
+      }
+    } else {
+      console.warn('Supabase service not available, using default users only')
+    }
+    
+    // Fallback to default users for testing/development
+    console.log('Trying default users fallback...')
+    const defaultUsers = [
+      {
+        email: 'superadmin@company.com',
+        password: 'SuperAdmin123!',
+        user: {
+          id: '1',
+          name: 'Super Administrator',
+          email: 'superadmin@company.com',
+          username: 'superadmin',
+          password: '',
+          role: 'superadmin' as UserRole,
+          position: 'System Administrator',
+          employeeNumber: 'SA001',
+          avatar: 'https://ui-avatars.com/api/?name=Super+Administrator&background=dc2626&color=fff'
+        }
+      },
+      {
+        email: 'admin@company.com',
+        password: 'Admin123!',
+        user: {
+          id: '2',
+          name: 'Administrator',
+          email: 'admin@company.com',
+          username: 'admin',
+          password: '',
+          role: 'admin' as UserRole,
+          position: 'Administrator',
+          employeeNumber: 'ADM001',
+          avatar: 'https://ui-avatars.com/api/?name=Administrator&background=3b82f6&color=fff'
+        }
+      },
+      {
+        email: 'user@company.com',
+        password: 'User123!',
+        user: {
+          id: '3',
+          name: 'Regular User',
+          email: 'user@company.com',
+          username: 'user',
+          password: '',
+          role: 'user' as UserRole,
+          position: 'Employee',
+          employeeNumber: 'EMP001',
+          avatar: 'https://ui-avatars.com/api/?name=Regular+User&background=10b981&color=fff'
+        }
+      }
+    ]
+
+    // Check credentials against default users
+    const matchedUser = defaultUsers.find(u => u.email === email && u.password === password)
+    
+    if (matchedUser) {
+      console.log('Default user login successful for:', matchedUser.user.name)
+      setCurrentUser(matchedUser.user)
+      // Persist user session to localStorage
+      localStorage.setItem('currentUser', JSON.stringify(matchedUser.user))
+      await logAction('login', 'system', `User ${matchedUser.user.name} logged in (default)`, matchedUser.user.id, matchedUser.user.name)
+      return matchedUser.user
+    }
+
+    console.log('Login failed for:', email)
+    return null
+  }
+  
+  const logout = async () => {
+    console.log('Logout called - clearing user session')
+    setCurrentUser(null)
+    // Clear user session from localStorage
+    localStorage.removeItem('currentUser')
+    localStorage.removeItem('wasLoggedIn')
+    console.log('User session cleared from localStorage')
+  }
+  
+  const createContact = async (contactData: Omit<Contact, 'id' | 'ownerId' | 'ownerName' | 'createdAt'>): Promise<Contact> => {
+    if (!currentUser) throw new Error('No current user')
+    
+    console.log('Creating contact:', contactData)
+    
+    // Create the contact object for immediate local state update
+    const tempId = `temp_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+    const newContact: Contact = {
+      ...contactData,
+      id: tempId,
+      ownerId: currentUser.id,
+      ownerName: currentUser.name,
+      createdAt: new Date().toISOString()
+    }
+    
+    // Immediately update local state for better UX
+    setContacts(prev => [...prev, newContact])
+    
+    // Immediately save to localStorage as backup
+    const tempContacts = [...contacts, newContact]
+    localStorage.setItem('contacts', JSON.stringify(tempContacts))
+    localStorage.setItem('pendingContactSync', JSON.stringify([{ action: 'create', contact: newContact }]))
+    
+    // Try to save to database
+    if (superAdminService) {
+      try {
+        const result = await superAdminService.createContact({
+          firstName: contactData.firstName,
+          middleName: contactData.middleName,
+          lastName: contactData.lastName,
+          birthday: contactData.birthday,
+          contactNumber: contactData.contactNumber,
+          company: contactData.company,
+          userId: currentUser.id
+        })
+        
+        if (result && result.success) {
+          console.log('Contact created successfully in database:', result)
+          
+          // Update the contact with the real database ID
+          const finalContact: Contact = {
+            ...newContact,
+            id: result.contact_id
+          }
+          
+          // Update local state with real ID
+          setContacts(prev => prev.map(c => c.id === tempId ? finalContact : c))
+          
+          // Update localStorage with real data
+          const finalContacts = tempContacts.map(c => c.id === tempId ? finalContact : c)
+          localStorage.setItem('contacts', JSON.stringify(finalContacts))
+          
+          // Clear pending sync since we succeeded
+          localStorage.removeItem('pendingContactSync')
+          
+          // Log the action with enhanced details
+          await logAction('create', 'contact', `Contact ${contactData.firstName} ${contactData.lastName} created successfully in database`, result.contact_id, `${contactData.firstName} ${contactData.lastName}`, 
+            `Database ID: ${result.contact_id}, User: ${currentUser.name}, Company: ${contactData.company}`)
+          
+          // Broadcast real-time update to other users
+          try {
+            await supabase.rpc('log_changelog', {
+              p_user_id: currentUser.id,
+              p_action: 'create',
+              p_entity: 'contact',
+              p_entity_id: result.contact_id,
+              p_entity_name: `${contactData.firstName} ${contactData.lastName}`,
+              p_description: `Contact ${contactData.firstName} ${contactData.lastName} created by ${currentUser.name}`,
+              p_details: `Company: ${contactData.company}, Real-time sync: enabled`
+            })
+            console.log('📡 Real-time update broadcasted for contact creation')
+          } catch (broadcastError) {
+            console.warn('Failed to broadcast real-time update:', broadcastError)
+          }
+          
+          console.log('✅ Contact successfully created and synced with database:', {
+            tempId,
+            databaseId: result.contact_id,
+            name: `${contactData.firstName} ${contactData.lastName}`,
+            owner: currentUser.name
+          })
+          
+          return finalContact
+        } else {
+          console.error('❌ Database contact creation failed:', result?.error || 'Unknown error')
+          console.log('📝 Contact data that failed:', contactData)
+          
+          // Log the failure for debugging
+          await logAction('create', 'contact', `Contact ${contactData.firstName} ${contactData.lastName} creation failed in database`, tempId, `${contactData.firstName} ${contactData.lastName}`, 
+            `Error: ${result?.error || 'Unknown error'}, Data: ${JSON.stringify(contactData)}`)
+          
+          // Keep the temporary contact in local state for manual retry later
+          return newContact
+        }
+      } catch (error) {
+        console.error('Error creating contact in database:', error)
+        // Contact remains in local state with temp ID for retry later
+        return newContact
+      }
+    } else {
+      // Fallback to local storage only
+      console.log('No Supabase service, contact saved locally only')
+      return newContact
+    }
+  }
+  
+  const updateContact = async (id: string, contactData: Partial<Omit<Contact, 'id'>>): Promise<Contact> => {
+    console.log('Updating contact:', id, contactData)
+    
+    // Immediately update local state for better UX
+    const updatedContact = { ...contacts.find(c => c.id === id)!, ...contactData }
+    setContacts(prev => prev.map(c => c.id === id ? updatedContact : c))
+    
+    // Immediately save to localStorage as backup
+    const updatedContacts = contacts.map(c => c.id === id ? updatedContact : c)
+    localStorage.setItem('contacts', JSON.stringify(updatedContacts))
+    
+    // If we have Supabase service, update in database
+    if (superAdminService) {
+      try {
+        const result = await superAdminService.updateContact(id, {
+          firstName: contactData.firstName,
+          middleName: contactData.middleName,
+          lastName: contactData.lastName,
+          birthday: contactData.birthday,
+          contactNumber: contactData.contactNumber,
+          company: contactData.company
+        })
+        
+        if (result && result.success) {
+          console.log('Contact updated successfully in database:', result)
+          
+          // Log the action
+          if (contactData.firstName && contactData.lastName) {
+            await logAction('update', 'contact', `Contact ${contactData.firstName} ${contactData.lastName} updated`, id, `${contactData.firstName} ${contactData.lastName}`)
+            
+            // Broadcast real-time update to other users
+            try {
+              await supabase.rpc('log_changelog', {
+                p_user_id: currentUser!.id,
+                p_action: 'update',
+                p_entity: 'contact',
+                p_entity_id: id,
+                p_entity_name: `${contactData.firstName} ${contactData.lastName}`,
+                p_description: `Contact ${contactData.firstName} ${contactData.lastName} updated by ${currentUser!.name}`,
+                p_details: `Real-time sync: enabled`
+              })
+              console.log('📡 Real-time update broadcasted for contact update')
+            } catch (broadcastError) {
+              console.warn('Failed to broadcast real-time update:', broadcastError)
+            }
+          }
+          
+          return updatedContact
+        } else {
+          console.error('Database contact update failed:', result?.error || 'Unknown error')
+          // Contact remains updated in local state for manual retry later
+          return updatedContact
+        }
+      } catch (error) {
+        console.error('Error updating contact in database:', error)
+        // Contact remains updated in local state
+        return updatedContact
+      }
+    } else {
+      // Fallback to local storage only
+      console.log('No Supabase service, contact updated locally only')
+      return updatedContact
+    }
+  }
+  
+  const deleteContact = async (id: string): Promise<void> => {
+    console.log('Deleting contact:', id)
+    
+    // Get contact info for logging before deletion
+    const contactToDelete = contacts.find(c => c.id === id)
+    const contactName = contactToDelete ? `${contactToDelete.firstName} ${contactToDelete.lastName}` : 'Unknown Contact'
+    
+    // Immediately update local state for better UX
+    setContacts(prev => prev.filter(c => c.id !== id))
+    
+    // Immediately update localStorage as backup
+    const updatedContacts = contacts.filter(c => c.id !== id)
+    localStorage.setItem('contacts', JSON.stringify(updatedContacts))
+    
+    // If we have Supabase service, delete from database
+    if (superAdminService) {
+      try {
+        const result = await superAdminService.deleteContact(id)
+        
+        if (result && result.success) {
+          console.log('Contact deleted successfully from database:', result)
+          
+          // Log the action
+          await logAction('delete', 'contact', `Contact ${contactName} deleted`, id, contactName)
+          
+          // Broadcast real-time update to other users
+          try {
+            await supabase.rpc('log_changelog', {
+              p_user_id: currentUser!.id,
+              p_action: 'delete',
+              p_entity: 'contact',
+              p_entity_id: id,
+              p_entity_name: contactName,
+              p_description: `Contact ${contactName} deleted by ${currentUser!.name}`,
+              p_details: `Real-time sync: enabled`
+            })
+            console.log('📡 Real-time update broadcasted for contact deletion')
+          } catch (broadcastError) {
+            console.warn('Failed to broadcast real-time update:', broadcastError)
+          }
+        } else {
+          console.error('Database contact deletion failed:', result?.error || 'Unknown error')
+          // Contact remains deleted from local state
+        }
+      } catch (error) {
+        console.error('Error deleting contact from database:', error)
+        // Contact remains deleted from local state
+      }
+    } else {
+      // Fallback to local storage only
+      console.log('No Supabase service, contact deleted locally only')
+    }
+  }
+  
+  // Load changelog from database
+  const loadChangelogFromDatabase = async (): Promise<void> => {
+    try {
+      const { data, error } = await supabase.rpc('get_changelog', {
+        p_limit: 100,
+        p_offset: 0
+      })
+      
+      if (error) {
+        console.error('❌ Failed to load changelog from database:', error)
+        return
+      }
+      
+      if (data) {
+        const transformedChangelog: ChangelogEntry[] = data.map((entry: {
+          id: string,
+          entry_timestamp: string,
+          user_id: string,
+          user_name: string,
+          user_role: string,
+          action: string,
+          entity: string,
+          entity_id: string | null,
+          entity_name: string | null,
+          description: string,
+          details: string | null
+        }) => ({
+          id: entry.id,
+          timestamp: entry.entry_timestamp,
+          userId: entry.user_id,
+          userName: entry.user_name,
+          userRole: entry.user_role as UserRole,
+          action: entry.action,
+          entity: entry.entity,
+          entityId: entry.entity_id,
+          entityName: entry.entity_name,
+          description: entry.description,
+          details: entry.details
+        }))
+        
+        setChangelog(transformedChangelog)
+        console.log('✅ Loaded changelog from database:', transformedChangelog.length, 'entries')
+      }
+    } catch (error) {
+      console.error('❌ Error loading changelog from database:', error)
+    }
+  }
+  
+  const logAction = async (
+    action: ChangelogEntry['action'],
+    entity: ChangelogEntry['entity'],
+    description: string,
+    entityId?: string,
+    entityName?: string,
+    details?: string
+  ): Promise<void> => {
+    if (!currentUser) return
+    
+    try {
+      // Log to database using RPC function
+      const { error } = await supabase.rpc('log_changelog', {
+        p_user_id: currentUser.id,
+        p_user_name: currentUser.name,
+        p_user_role: currentUser.role,
+        p_action: action,
+        p_entity: entity,
+        p_entity_id: entityId || null,
+        p_entity_name: entityName || null,
+        p_description: description,
+        p_details: details || null
+      })
+      
+      if (error) {
+        console.error('❌ Failed to log action to database:', error)
+        // Fallback to local storage if database fails
+        const newEntry: ChangelogEntry = {
+          id: `local_${Date.now()}`,
+          timestamp: new Date().toISOString(),
+          userId: currentUser.id,
+          userName: currentUser.name,
+          userRole: currentUser.role,
+          action,
+          entity,
+          entityId,
+          entityName,
+          description,
+          details
+        }
+        setChangelog(prev => [...prev, newEntry])
+      } else {
+        console.log('✅ Action logged to database:', { action, entity, description })
+        // Refresh changelog from database to get latest entries
+        await loadChangelogFromDatabase()
+      }
+    } catch (error) {
+      console.error('❌ Error logging action:', error)
+      // Fallback to local storage
+      const newEntry: ChangelogEntry = {
+        id: `local_${Date.now()}`,
+        timestamp: new Date().toISOString(),
+        userId: currentUser.id,
+        userName: currentUser.name,
+        userRole: currentUser.role,
+        action,
+        entity,
+        entityId,
+        entityName,
+        description,
+        details
+      }
+      setChangelog(prev => [...prev, newEntry])
+    }
+  }
+
+  // SuperAdmin specific functions
+  const createUserBySuperAdmin = async (userData: {
+    email: string
+    password: string
+    name: string
+    username: string
+    employeeNumber: string
+    position: string
+    role: User['role']
+  }): Promise<User> => {
+    console.log('Creating user via SuperAdmin - will save to Supabase database:', userData.name, userData.role)
+    
+    // Check if current user is superadmin
+    if (!currentUser || currentUser.role !== 'superadmin') {
+      throw new Error('Only SuperAdmin can create users')
+    }
+
+    // Check if Supabase service is available
+    if (!superAdminService) {
+      console.error('Supabase service not available - cannot save to database')
+      throw new Error('Database service not available. Please check your Supabase connection.')
+    }
+
+    try {
+      // Call Supabase function to create user in database
+      console.log('Calling Supabase createUser with data:', {
+        email: userData.email,
+        name: userData.name,
+        username: userData.username,
+        employee_number: userData.employeeNumber,
+        position: userData.position,
+        role: userData.role
+      })
+      
+      const result = await superAdminService.createUser({
+        email: userData.email,
+        password: userData.password,
+        name: userData.name,
+        username: userData.username,
+        employee_number: userData.employeeNumber,
+        position: userData.position,
+        role: userData.role
+      })
+
+      console.log('Supabase createUser result:', result)
+
+      // Check if Supabase creation was successful
+      if (result && result.success) {
+        // Create user object for local state
+        const newUser: User = {
+          id: result.user_id || Date.now().toString(),
+          name: userData.name,
+          email: userData.email,
+          username: userData.username,
+          password: '', // Don't store password in frontend
+          role: userData.role,
+          position: userData.position,
+          employeeNumber: userData.employeeNumber,
+          avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(userData.name)}&background=3b82f6&color=fff`
+        }
+
+        // Update local state immediately for UI responsiveness
+        setUsers(prev => [...prev, newUser])
+        
+        // Also refresh users from Supabase to ensure data consistency
+        try {
+          const refreshedUsers = await superAdminService.getAllUsers()
+          if (refreshedUsers && refreshedUsers.length > 0) {
+            const convertedUsers: User[] = refreshedUsers.map(dbUser => ({
+              id: dbUser.id,
+              name: dbUser.name,
+              email: dbUser.email,
+              username: dbUser.username,
+              password: '', // Never expose password
+              role: dbUser.role as UserRole,
+              position: dbUser.position,
+              employeeNumber: dbUser.employee_number,
+              avatar: dbUser.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(dbUser.name)}&background=3b82f6&color=fff`
+            }))
+            setUsers(convertedUsers)
+            console.log('Users list refreshed from Supabase after user creation')
+          }
+        } catch (refreshError) {
+          console.warn('Failed to refresh users list after creation:', refreshError)
+          // Continue with local state update if refresh fails
+        }
+        
+        // Log the action
+        await logAction('create', 'user', `Created new ${userData.role} user: ${userData.name}`, newUser.id, userData.name)
+        
+        console.log('User successfully created in Supabase and saved to database:', result)
+        return newUser
+      } else {
+        // Handle Supabase error
+        const errorMessage = result?.error || 'Failed to create user in database'
+        console.error('Supabase user creation failed:', errorMessage)
+        throw new Error(errorMessage)
+      }
+    } catch (error) {
+      console.error('Error creating user in Supabase:', error)
+      
+      // Enhanced error handling
+      if (error instanceof Error) {
+        if (error.message.includes('function create_user_simple') || error.message.includes('does not exist')) {
+          console.error('❌ Database function create_user_simple does not exist. Please run the SQL schema file.')
+          throw new Error('Database function not found. Please ensure the Supabase schema has been applied.')
+        }
+        
+        if (error.message.includes('permission denied') || error.message.includes('authentication')) {
+          console.error('❌ Authentication or permission error with Supabase')
+          throw new Error('Database authentication failed. Please check your Supabase credentials.')
+        }
+        
+        if (error.message.includes('network') || error.message.includes('fetch')) {
+          console.warn('Network error detected, falling back to local user creation')
+        } else {
+          // Re-throw database-specific errors
+          throw new Error(`Database error: ${error.message}`)
+        }
+      }
+      
+      // If it's a network error, fall back to local creation for demo purposes
+      if (error instanceof Error && (error.message.includes('fetch') || error.message.includes('network'))) {
+        console.warn('Network error detected, falling back to local user creation')
+        
+        // Check for local duplicates
+        const existingUser = users.find(u => 
+          u.email === userData.email || 
+          u.username === userData.username || 
+          u.employeeNumber === userData.employeeNumber
+        )
+        
+        if (existingUser) {
+          if (existingUser.email === userData.email) {
+            throw new Error('Email already exists')
+          }
+          if (existingUser.username === userData.username) {
+            throw new Error('Username already exists')
+          }
+          if (existingUser.employeeNumber === userData.employeeNumber) {
+            throw new Error('Employee number already exists')
+          }
+        }
+
+        const newUser: User = {
+          id: Date.now().toString(),
+          name: userData.name,
+          email: userData.email,
+          username: userData.username,
+          password: '', // Don't store password in frontend
+          role: userData.role,
+          position: userData.position,
+          employeeNumber: userData.employeeNumber,
+          avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(userData.name)}&background=3b82f6&color=fff`
+        }
+
+        setUsers(prev => [...prev, newUser])
+        await logAction('create', 'user', `Created new ${userData.role} user: ${userData.name} (local fallback)`, newUser.id, userData.name)
+        
+        return newUser
+      }
+      
+      // Re-throw other errors
+      throw error
+    }
+  }
+
+  const resetUserPassword = async (userId: string, newPassword: string): Promise<void> => {
+    console.log('Resetting password for user:', userId)
+    
+    // Check if current user is superadmin
+    if (!currentUser || currentUser.role !== 'superadmin') {
+      throw new Error('Only SuperAdmin can reset passwords')
+    }
+
+    const userIndex = users.findIndex(u => u.id === userId)
+    if (userIndex === -1) {
+      throw new Error('User not found')
+    }
+
+    const updatedUser = { ...users[userIndex], password: newPassword }
+    const newUsers = [...users]
+    newUsers[userIndex] = updatedUser
+    setUsers(newUsers)
+    
+    // Log the action
+    await logAction('update', 'user', `Reset password for user: ${updatedUser.name}`, userId, updatedUser.name)
+  }
+
+  const generateUsername = async (name: string, employeeNumber: string): Promise<string> => {
+    console.log('Generating username for:', name, employeeNumber)
+    
+    try {
+      // Try to use Supabase function first
+      const supabaseUsername = await superAdminService.generateUsername(name, employeeNumber)
+      if (supabaseUsername) {
+        console.log('Generated username from Supabase:', supabaseUsername)
+        return supabaseUsername
+      }
+    } catch (error) {
+      console.warn('Supabase username generation failed, using local fallback:', error)
+    }
+    
+    // Fallback to local generation
+    const firstName = name.split(' ')[0].toLowerCase()
+    const empSuffix = employeeNumber.slice(-3)
+    let baseUsername = firstName + empSuffix
+    
+    // Remove any non-alphanumeric characters
+    baseUsername = baseUsername.replace(/[^a-z0-9]/g, '')
+    
+    let finalUsername = baseUsername
+    let counter = 0
+    
+    // Check for uniqueness and add counter if needed
+    while (users.some(u => u.username === finalUsername)) {
+      counter++
+      finalUsername = baseUsername + counter
+    }
+    
+    console.log('Generated username locally:', finalUsername)
+    return finalUsername
+  }
+
+  const value: DatabaseContextType = {
+    users,
+    contacts,
+    changelog,
+    loading,
+    usersLoading,
+    contactsLoading,
+    changelogLoading,
+    currentUser,
+    refreshUsers,
+    refreshContacts,
+    refreshChangelog,
+    syncContactsToDatabase,
+    createUser,
+    updateUser,
+    deleteUser,
+    login,
+    logout,
+    createContact,
+    updateContact,
+    deleteContact,
+    logAction,
+    createUserBySuperAdmin,
+    resetUserPassword,
+    generateUsername
+  }
+
+  console.log('DatabaseProvider: Providing context value')
+
+  return (
+    <DatabaseContext.Provider value={value}>
+      {children}
+    </DatabaseContext.Provider>
+  )
+}
+
+export const useDatabaseContext = () => {
+  const context = useContext(DatabaseContext)
+  if (!context) {
+    throw new Error('useDatabaseContext must be used within a DatabaseProvider')
+  }
+  return context
+}
