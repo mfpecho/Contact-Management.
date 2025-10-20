@@ -78,7 +78,9 @@ export const DatabaseProvider: React.FC<DatabaseProviderProps> = ({ children }) 
   console.log('DatabaseProvider: Current user:', currentUser)
 
   // Simple mock implementations
-  const refreshUsers = async () => { console.log('refreshUsers called') }
+  const refreshUsers = useCallback(async () => { 
+    console.log('refreshUsers called') 
+  }, [])
   
   const refreshContacts = useCallback(async () => { 
     console.log('🔄 refreshContacts called')
@@ -549,10 +551,10 @@ export const DatabaseProvider: React.FC<DatabaseProviderProps> = ({ children }) 
     }
   }
   
-  const refreshChangelog = async () => { 
+  const refreshChangelog = useCallback(async () => { 
     console.log('refreshChangelog called - loading from database')
     await loadChangelogFromDatabase()
-  }
+  }, [])
   
   const createUser = async (userData: Omit<User, 'id'>): Promise<User> => {
     const newUser = { ...userData, id: Date.now().toString() }
@@ -636,10 +638,15 @@ export const DatabaseProvider: React.FC<DatabaseProviderProps> = ({ children }) 
           localStorage.setItem('currentUser', JSON.stringify(authenticatedUser))
           await logAction('login', 'system', `User ${authenticatedUser.name} logged in from database`, authenticatedUser.id, authenticatedUser.name)
           
-          // Trigger contact refresh after successful login
+          // Trigger contact refresh and cross-device sync after successful login
           setTimeout(async () => {
             console.log('🔄 Refreshing contacts after successful database login...')
             await refreshContacts()
+            
+            // Perform cross-device sync check to ensure data consistency
+            setTimeout(async () => {
+              await checkCrossDeviceSync()
+            }, 1000)
           }, 500)
           
           return authenticatedUser
@@ -734,10 +741,15 @@ export const DatabaseProvider: React.FC<DatabaseProviderProps> = ({ children }) 
       localStorage.setItem('currentUser', JSON.stringify(matchedUser.user))
       await logAction('login', 'system', `User ${matchedUser.user.name} logged in (default)`, matchedUser.user.id, matchedUser.user.name)
       
-      // Trigger contact refresh after successful default login
+      // Trigger contact refresh and cross-device sync after successful default login
       setTimeout(async () => {
         console.log('🔄 Refreshing contacts after successful default login...')
         await refreshContacts()
+        
+        // Perform cross-device sync check to ensure data consistency
+        setTimeout(async () => {
+          await checkCrossDeviceSync()
+        }, 1000)
       }, 500)
       
       return matchedUser.user
@@ -1381,7 +1393,7 @@ export const DatabaseProvider: React.FC<DatabaseProviderProps> = ({ children }) 
   }
 
   // Force refresh all data from database (for troubleshooting sync issues)
-  const forceRefreshFromDatabase = async () => {
+  const forceRefreshFromDatabase = useCallback(async () => {
     console.log('🔄 Force refreshing all data from database...')
     
     if (!currentUser || !superAdminService) {
@@ -1390,6 +1402,12 @@ export const DatabaseProvider: React.FC<DatabaseProviderProps> = ({ children }) 
     }
     
     try {
+      // Clear localStorage to force fresh database fetch
+      console.log('🗑️ Clearing localStorage cache for fresh sync...')
+      localStorage.removeItem('contacts')
+      localStorage.removeItem('lastContactSync')
+      localStorage.removeItem('lastRealtimeSync')
+      
       // Refresh contacts with detailed logging
       await refreshContacts()
       
@@ -1400,6 +1418,7 @@ export const DatabaseProvider: React.FC<DatabaseProviderProps> = ({ children }) 
       // Clear any pending sync operations
       localStorage.removeItem('pendingContactSync')
       localStorage.setItem('lastForceSync', new Date().toISOString())
+      localStorage.setItem('deviceSyncComplete', new Date().toISOString())
       
       toast({
         title: "🔄 Database Sync Complete",
@@ -1417,7 +1436,33 @@ export const DatabaseProvider: React.FC<DatabaseProviderProps> = ({ children }) 
         duration: 5000,
       })
     }
-  }
+  }, [currentUser, refreshContacts, refreshUsers, refreshChangelog])
+
+  // Check if this is a fresh device/browser and needs full sync
+  const checkCrossDeviceSync = useCallback(async () => {
+    if (!currentUser || !superAdminService) return
+    
+    const lastDeviceSync = localStorage.getItem('deviceSyncComplete')
+    const lastDatabaseSync = localStorage.getItem('lastDatabaseSync')
+    
+    // If no device sync record or it's been more than 1 hour since last database sync
+    const shouldForceFreshSync = !lastDeviceSync || 
+      !lastDatabaseSync || 
+      (Date.now() - new Date(lastDatabaseSync).getTime()) > (60 * 60 * 1000)
+    
+    if (shouldForceFreshSync) {
+      console.log('🔄 Performing cross-device sync check...')
+      
+      toast({
+        title: "🔄 Syncing Data",
+        description: "Ensuring you have the latest data across all devices...",
+        duration: 2000,
+      })
+      
+      // Force fresh database sync
+      await forceRefreshFromDatabase()
+    }
+  }, [currentUser, forceRefreshFromDatabase])
 
   const value: DatabaseContextType = {
     users,

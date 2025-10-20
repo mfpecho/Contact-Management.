@@ -12,42 +12,67 @@ interface BirthdayModalProps {
   onClose: () => void;
   todayBirthdays: Contact[];
   upcomingBirthdays: Contact[];
+  oneMonthAdvanceBirthdays: Contact[];
   collaborativeBirthdays: Contact[];
   personalBirthdays: Contact[];
 }
+
+// Shared helper functions
+const getDaysUntilBirthday = (birthday: string) => {
+  if (!birthday) return 0;
+  
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  
+  // Parse birthday string consistently (assuming YYYY-MM-DD format)
+  const parts = birthday.split('-');
+  if (parts.length !== 3) return 0;
+  
+  const [year, month, day] = parts.map(Number);
+  if (isNaN(year) || isNaN(month) || isNaN(day)) return 0;
+  
+  // Create this year's birthday
+  const thisYearBirthday = new Date(today.getFullYear(), month - 1, day);
+  thisYearBirthday.setHours(0, 0, 0, 0);
+  
+  // If birthday already passed this year, use next year
+  if (thisYearBirthday < today) {
+    thisYearBirthday.setFullYear(today.getFullYear() + 1);
+  }
+  
+  const timeDiff = thisYearBirthday.getTime() - today.getTime();
+  return Math.ceil(timeDiff / (1000 * 3600 * 24));
+};
 
 const BirthdayModal: React.FC<BirthdayModalProps> = ({ 
   isOpen, 
   onClose, 
   todayBirthdays, 
   upcomingBirthdays, 
+  oneMonthAdvanceBirthdays,
   collaborativeBirthdays, 
   personalBirthdays 
 }) => {
   if (!isOpen) return null;
 
-  const getDaysUntilBirthday = (birthday: string) => {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const birthDate = new Date(birthday);
-    const thisYearBirthday = new Date(today.getFullYear(), birthDate.getMonth(), birthDate.getDate());
-    
-    if (thisYearBirthday < today) {
-      thisYearBirthday.setFullYear(today.getFullYear() + 1);
-    }
-    
-    const timeDiff = thisYearBirthday.getTime() - today.getTime();
-    return Math.ceil(timeDiff / (1000 * 3600 * 24));
-  };
-
-  const formatBirthdayDate = (birthday: string) => {
-    const date = new Date(birthday);
-    return date.toLocaleDateString('en-US', { 
-      month: 'long', 
-      day: 'numeric',
-      year: 'numeric'
-    });
-  };
+const formatBirthdayDate = (birthday: string) => {
+  if (!birthday) return 'Invalid Date';
+  
+  // Parse birthday string consistently (assuming YYYY-MM-DD format)
+  const parts = birthday.split('-');
+  if (parts.length !== 3) return 'Invalid Date';
+  
+  const [year, month, day] = parts.map(Number);
+  if (isNaN(year) || isNaN(month) || isNaN(day)) return 'Invalid Date';
+  
+  const date = new Date(year, month - 1, day); // month is 0-indexed
+  
+  return date.toLocaleDateString('en-US', { 
+    month: 'long', 
+    day: 'numeric',
+    year: 'numeric'
+  });
+};
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
@@ -118,7 +143,7 @@ const BirthdayModal: React.FC<BirthdayModalProps> = ({
                 <Calendar className="w-4 h-4 text-blue-600 dark:text-blue-300" />
               </div>
               <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
-                1 Month Advance Birthdays
+                Upcoming Birthdays
               </h3>
             </div>
             
@@ -182,6 +207,50 @@ const BirthdayModal: React.FC<BirthdayModalProps> = ({
               </div>
             )}
           </div>
+
+          {/* 1 Month Advance Birthdays */}
+          {oneMonthAdvanceBirthdays.length > 0 && (
+            <div className="mt-8">
+              <div className="flex items-center gap-2 mb-4">
+                <div className="p-1.5 bg-indigo-100 dark:bg-indigo-800 rounded-lg">
+                  <Calendar className="w-4 h-4 text-indigo-600 dark:text-indigo-300" />
+                </div>
+                <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
+                  1 Month Advance Birthdays
+                </h3>
+              </div>
+              
+              <div className="space-y-3">
+                {oneMonthAdvanceBirthdays.map(contact => {
+                  const daysUntil = getDaysUntilBirthday(contact.birthday);
+                  
+                  return (
+                    <div key={contact.id} className="bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-800 rounded-lg p-4">
+                      <div className="flex items-center justify-between">
+                        <div className="flex-1">
+                          <h4 className="font-semibold text-indigo-900 dark:text-indigo-100">
+                            {contact.firstName} {contact.lastName}
+                          </h4>
+                          <p className="text-sm text-indigo-700 dark:text-indigo-300">
+                            {contact.company} • Owner: {contact.ownerName}
+                          </p>
+                          <p className="text-xs text-indigo-600 dark:text-indigo-400 mt-1">
+                            Born: {formatBirthdayDate(contact.birthday)}
+                          </p>
+                        </div>
+                        <div className="text-right ml-4">
+                          <div className="text-xl mb-1">📅</div>
+                          <span className="text-sm font-semibold text-indigo-600 dark:text-indigo-400">
+                            {daysUntil} days
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
           {/* Collaborative Birthdays (30-60 days advance) */}
           {collaborativeBirthdays.length > 0 && (
@@ -330,6 +399,7 @@ export const BirthdayBox: React.FC<BirthdayBoxProps> = ({ contacts, currentUserI
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [todayBirthdays, setTodayBirthdays] = useState<Contact[]>([]);
   const [upcomingBirthdays, setUpcomingBirthdays] = useState<Contact[]>([]);
+  const [oneMonthAdvanceBirthdays, setOneMonthAdvanceBirthdays] = useState<Contact[]>([]);
   const [collaborativeBirthdays, setCollaborativeBirthdays] = useState<Contact[]>([]);
   const [personalBirthdays, setPersonalBirthdays] = useState<Contact[]>([]);
 
@@ -338,20 +408,52 @@ export const BirthdayBox: React.FC<BirthdayBoxProps> = ({ contacts, currentUserI
     today.setHours(0, 0, 0, 0);
     const thirtyDaysFromNow = new Date(today);
     thirtyDaysFromNow.setDate(today.getDate() + 30);
+    
+    // Date ranges for different birthday categories
+    const oneMonthFromNow = new Date(today);
+    oneMonthFromNow.setDate(today.getDate() + 30);
+    const twoMonthsFromNow = new Date(today);
+    twoMonthsFromNow.setDate(today.getDate() + 60);
+
+    // Helper function to parse birthday consistently with validation
+    const parseBirthday = (birthday: string) => {
+      if (!birthday || typeof birthday !== 'string') return null;
+      
+      const parts = birthday.split('-');
+      if (parts.length !== 3) return null;
+      
+      const [year, month, day] = parts.map(Number);
+      
+      // Validate date components
+      if (isNaN(year) || isNaN(month) || isNaN(day)) return null;
+      if (month < 1 || month > 12) return null;
+      if (day < 1 || day > 31) return null;
+      if (year < 1900 || year > new Date().getFullYear() + 10) return null;
+      
+      return { year, month: month - 1, day }; // month is 0-indexed in JS Date
+    };
 
     // Today's birthdays (all contacts)
     const todaysBirthdays = contacts.filter(contact => {
       if (!contact.birthday) return false;
-      const birthDate = new Date(contact.birthday);
-      const thisYearBirthday = new Date(today.getFullYear(), birthDate.getMonth(), birthDate.getDate());
+      const parsed = parseBirthday(contact.birthday);
+      if (!parsed) return false;
+      
+      const { month, day } = parsed;
+      const thisYearBirthday = new Date(today.getFullYear(), month, day);
+      thisYearBirthday.setHours(0, 0, 0, 0);
       return thisYearBirthday.getTime() === today.getTime();
     });
 
     // Upcoming birthdays (next 30 days, excluding today) - all contacts
     const upcoming = contacts.filter(contact => {
       if (!contact.birthday) return false;
-      const birthDate = new Date(contact.birthday);
-      const thisYearBirthday = new Date(today.getFullYear(), birthDate.getMonth(), birthDate.getDate());
+      const parsed = parseBirthday(contact.birthday);
+      if (!parsed) return false;
+      
+      const { month, day } = parsed;
+      const thisYearBirthday = new Date(today.getFullYear(), month, day);
+      thisYearBirthday.setHours(0, 0, 0, 0);
       
       // If birthday already passed this year, check next year
       if (thisYearBirthday < today) {
@@ -360,12 +462,17 @@ export const BirthdayBox: React.FC<BirthdayBoxProps> = ({ contacts, currentUserI
 
       return thisYearBirthday > today && thisYearBirthday <= thirtyDaysFromNow;
     }).sort((a, b) => {
-      const aDate = new Date(a.birthday);
-      const bDate = new Date(b.birthday);
+      const aData = parseBirthday(a.birthday);
+      const bData = parseBirthday(b.birthday);
+      if (!aData || !bData) return 0;
+      
       const thisYear = today.getFullYear();
       
-      const aBirthday = new Date(thisYear, aDate.getMonth(), aDate.getDate());
-      const bBirthday = new Date(thisYear, bDate.getMonth(), bDate.getDate());
+      const aBirthday = new Date(thisYear, aData.month, aData.day);
+      const bBirthday = new Date(thisYear, bData.month, bData.day);
+      
+      aBirthday.setHours(0, 0, 0, 0);
+      bBirthday.setHours(0, 0, 0, 0);
       
       if (aBirthday < today) aBirthday.setFullYear(thisYear + 1);
       if (bBirthday < today) bBirthday.setFullYear(thisYear + 1);
@@ -376,19 +483,53 @@ export const BirthdayBox: React.FC<BirthdayBoxProps> = ({ contacts, currentUserI
     // Personal upcoming birthdays (user's contacts only)
     const personalUpcoming = upcoming.filter(contact => contact.ownerId === currentUserId);
     
-    // Collaborative birthdays (30-60 days advance notice for non-personal contacts)
-    const oneMonthFromNow = new Date(today);
-    oneMonthFromNow.setDate(today.getDate() + 30);
-    const twoMonthsFromNow = new Date(today);
-    twoMonthsFromNow.setDate(today.getDate() + 60);
+    // 1 Month Advance Birthdays (30-60 days from today) - all contacts
+    const oneMonthAdvance = contacts.filter(contact => {
+      if (!contact.birthday) return false;
+      const parsed = parseBirthday(contact.birthday);
+      if (!parsed) return false;
+      
+      const { month, day } = parsed;
+      const thisYearBirthday = new Date(today.getFullYear(), month, day);
+      thisYearBirthday.setHours(0, 0, 0, 0);
+      
+      // If birthday already passed this year, check next year
+      if (thisYearBirthday < today) {
+        thisYearBirthday.setFullYear(today.getFullYear() + 1);
+      }
 
+      // Check if birthday is between 30-60 days from today
+      return thisYearBirthday > oneMonthFromNow && thisYearBirthday <= twoMonthsFromNow;
+    }).sort((a, b) => {
+      const aData = parseBirthday(a.birthday);
+      const bData = parseBirthday(b.birthday);
+      if (!aData || !bData) return 0;
+      
+      const thisYear = today.getFullYear();
+      
+      const aBirthday = new Date(thisYear, aData.month, aData.day);
+      const bBirthday = new Date(thisYear, bData.month, bData.day);
+      
+      aBirthday.setHours(0, 0, 0, 0);
+      bBirthday.setHours(0, 0, 0, 0);
+      
+      if (aBirthday < today) aBirthday.setFullYear(thisYear + 1);
+      if (bBirthday < today) bBirthday.setFullYear(thisYear + 1);
+      
+      return aBirthday.getTime() - bBirthday.getTime();
+    });
+    
+    // Collaborative birthdays (30-60 days advance notice for non-personal contacts)
     const collaborativeUpcoming = contacts
       .filter(contact => contact.ownerId !== currentUserId) // Only collaborative contacts (not owned by current user)
       .filter(contact => {
         if (!contact.birthday) return false;
+        const parsed = parseBirthday(contact.birthday);
+        if (!parsed) return false;
         
-        const birthDate = new Date(contact.birthday);
-        const thisYearBirthday = new Date(today.getFullYear(), birthDate.getMonth(), birthDate.getDate());
+        const { month, day } = parsed;
+        const thisYearBirthday = new Date(today.getFullYear(), month, day);
+        thisYearBirthday.setHours(0, 0, 0, 0);
         
         // If birthday already passed this year, check next year
         if (thisYearBirthday < today) {
@@ -399,12 +540,17 @@ export const BirthdayBox: React.FC<BirthdayBoxProps> = ({ contacts, currentUserI
         return thisYearBirthday > oneMonthFromNow && thisYearBirthday <= twoMonthsFromNow;
       })
       .sort((a, b) => {
-        const aDate = new Date(a.birthday);
-        const bDate = new Date(b.birthday);
+        const aData = parseBirthday(a.birthday);
+        const bData = parseBirthday(b.birthday);
+        if (!aData || !bData) return 0;
+        
         const thisYear = today.getFullYear();
         
-        const aBirthday = new Date(thisYear, aDate.getMonth(), aDate.getDate());
-        const bBirthday = new Date(thisYear, bDate.getMonth(), bDate.getDate());
+        const aBirthday = new Date(thisYear, aData.month, aData.day);
+        const bBirthday = new Date(thisYear, bData.month, bData.day);
+        
+        aBirthday.setHours(0, 0, 0, 0);
+        bBirthday.setHours(0, 0, 0, 0);
         
         if (aBirthday < today) aBirthday.setFullYear(thisYear + 1);
         if (bBirthday < today) bBirthday.setFullYear(thisYear + 1);
@@ -414,6 +560,7 @@ export const BirthdayBox: React.FC<BirthdayBoxProps> = ({ contacts, currentUserI
 
     setTodayBirthdays(todaysBirthdays);
     setUpcomingBirthdays(upcoming);
+    setOneMonthAdvanceBirthdays(oneMonthAdvance);
     setCollaborativeBirthdays(collaborativeUpcoming);
     setPersonalBirthdays(personalUpcoming);
 
@@ -422,6 +569,7 @@ export const BirthdayBox: React.FC<BirthdayBoxProps> = ({ contacts, currentUserI
       - Total contacts: ${contacts.length}
       - Today's birthdays: ${todaysBirthdays.length}
       - Upcoming birthdays (0-30 days): ${upcoming.length}
+      - 1 Month Advance birthdays (30-60 days): ${oneMonthAdvance.length}
       - Personal birthdays: ${personalUpcoming.length}
       - Collaborative birthdays (30-60 days): ${collaborativeUpcoming.length}`);
     
@@ -433,6 +581,7 @@ export const BirthdayBox: React.FC<BirthdayBoxProps> = ({ contacts, currentUserI
   }, [contacts, currentUserId]);
 
   const totalBirthdays = todayBirthdays.length + upcomingBirthdays.length;
+  const totalAdvanceBirthdays = totalBirthdays + oneMonthAdvanceBirthdays.length;
 
   return (
     <>
@@ -449,10 +598,12 @@ export const BirthdayBox: React.FC<BirthdayBoxProps> = ({ contacts, currentUserI
               <h3 className="text-lg font-bold text-gray-900 dark:text-white">Birthdays</h3>
               <p className="text-sm text-gray-600 dark:text-gray-400">
                 {todayBirthdays.length > 0 
-                  ? `${todayBirthdays.length} today • ${upcomingBirthdays.length} upcoming`
+                  ? `${todayBirthdays.length} today • ${upcomingBirthdays.length} upcoming • ${oneMonthAdvanceBirthdays.length} advance`
                   : totalBirthdays > 0 
-                    ? `${totalBirthdays} upcoming in next 30 days`
-                    : 'No upcoming birthdays'
+                    ? `${totalBirthdays} upcoming • ${oneMonthAdvanceBirthdays.length} advance`
+                    : oneMonthAdvanceBirthdays.length > 0 
+                      ? `${oneMonthAdvanceBirthdays.length} advance birthdays`
+                      : 'No upcoming birthdays'
                 }
               </p>
             </div>
@@ -466,8 +617,15 @@ export const BirthdayBox: React.FC<BirthdayBoxProps> = ({ contacts, currentUserI
               </div>
             )}
             
+            {todayBirthdays.length === 0 && upcomingBirthdays.length === 0 && oneMonthAdvanceBirthdays.length > 0 && (
+              <div className="flex items-center gap-2 bg-indigo-100 dark:bg-indigo-800 text-indigo-700 dark:text-indigo-200 px-3 py-1 rounded-full">
+                <div className="w-2 h-2 bg-indigo-500 rounded-full"></div>
+                <span className="text-sm font-semibold">{oneMonthAdvanceBirthdays.length} Advance</span>
+              </div>
+            )}
+            
             <div className="text-2xl">
-              {todayBirthdays.length > 0 ? '🎉' : totalBirthdays > 0 ? '🎂' : '🎈'}
+              {todayBirthdays.length > 0 ? '🎉' : totalBirthdays > 0 ? '🎂' : oneMonthAdvanceBirthdays.length > 0 ? '📅' : '🎈'}
             </div>
             
             <ChevronRight className="w-5 h-5 text-gray-400 dark:text-gray-500" />
@@ -483,7 +641,7 @@ export const BirthdayBox: React.FC<BirthdayBoxProps> = ({ contacts, currentUserI
             </div>
             <div className="space-y-1">
               {upcomingBirthdays.slice(0, 3).map(contact => {
-                const daysUntil = Math.ceil((new Date(new Date().getFullYear(), new Date(contact.birthday).getMonth(), new Date(contact.birthday).getDate()).getTime() - new Date().getTime()) / (1000 * 3600 * 24));
+                const daysUntil = getDaysUntilBirthday(contact.birthday);
                 return (
                   <div key={contact.id} className="flex justify-between items-center text-sm">
                     <span className="text-gray-700 dark:text-gray-300 truncate">
@@ -510,6 +668,7 @@ export const BirthdayBox: React.FC<BirthdayBoxProps> = ({ contacts, currentUserI
         onClose={() => setIsModalOpen(false)}
         todayBirthdays={todayBirthdays}
         upcomingBirthdays={upcomingBirthdays}
+        oneMonthAdvanceBirthdays={oneMonthAdvanceBirthdays}
         collaborativeBirthdays={collaborativeBirthdays}
         personalBirthdays={personalBirthdays}
       />
