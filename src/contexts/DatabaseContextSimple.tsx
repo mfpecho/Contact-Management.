@@ -19,6 +19,7 @@ interface DatabaseContextType {
   usersLoading: boolean
   contactsLoading: boolean
   changelogLoading: boolean
+  isInitializing: boolean
   currentUser: User | null
   refreshUsers: () => Promise<void>
   refreshContacts: () => Promise<void>
@@ -64,6 +65,37 @@ interface DatabaseProviderProps {
 export const DatabaseProvider: React.FC<DatabaseProviderProps> = ({ children }) => {
   console.log('DatabaseProvider: Rendering...')
   
+  // Helper functions for session-based storage
+  const getSessionData = (key: string) => {
+    try {
+      return sessionStorage.getItem(key) || localStorage.getItem(key)
+    } catch {
+      return localStorage.getItem(key)
+    }
+  }
+  
+  const setSessionData = (key: string, value: string) => {
+    try {
+      // Store in sessionStorage for current session
+      sessionStorage.setItem(key, value)
+      // Also backup to localStorage for persistence across API calls
+      if (key === 'contacts' || key === 'lastContactSync') {
+        localStorage.setItem(key, value)
+      }
+    } catch {
+      localStorage.setItem(key, value)
+    }
+  }
+  
+  const clearSessionData = (key: string) => {
+    try {
+      sessionStorage.removeItem(key)
+      localStorage.removeItem(key)
+    } catch {
+      localStorage.removeItem(key)
+    }
+  }
+  
   const [users, setUsers] = useState<User[]>([])
   const [contacts, setContacts] = useState<Contact[]>([])
   const [changelog, setChangelog] = useState<ChangelogEntry[]>([])
@@ -72,6 +104,7 @@ export const DatabaseProvider: React.FC<DatabaseProviderProps> = ({ children }) 
   const [usersLoading, setUsersLoading] = useState(false)
   const [contactsLoading, setContactsLoading] = useState(false)
   const [changelogLoading, setChangelogLoading] = useState(false)
+  const [isInitializing, setIsInitializing] = useState(true)
   
   const [currentUser, setCurrentUser] = useState<User | null>(null)
 
@@ -79,7 +112,79 @@ export const DatabaseProvider: React.FC<DatabaseProviderProps> = ({ children }) 
 
   // Simple mock implementations
   const refreshUsers = useCallback(async () => { 
-    console.log('refreshUsers called') 
+    console.log('refreshUsers called - fetching from database...')
+    setUsersLoading(true)
+    
+    try {
+      // Try to fetch users from database using the new function
+      const { data, error } = await supabase.rpc('get_users_simple')
+      
+      if (error) {
+        console.error('Error fetching users from database:', error)
+        throw error
+      }
+      
+      if (data && data.success && data.users) {
+        console.log('✅ Users fetched successfully from database:', data.users.length)
+        
+        // Log sample users for debugging
+        if (data.users.length > 0) {
+          console.log('👥 Sample users from database:')
+          data.users.slice(0, 3).forEach((user, index) => {
+            console.log(`  ${index + 1}. ${user.name} (${user.email}) - Role: ${user.role}`)
+          })
+        }
+        
+        // Update state with users
+        setUsers(data.users)
+        
+        // Sync with session storage
+        setSessionData('users', JSON.stringify(data.users))
+        setSessionData('lastUserSync', new Date().toISOString())
+        
+        console.log('✅ Users state and session storage updated successfully')
+        
+        // Log user summary
+        const roleCount = data.users.reduce((acc, user) => {
+          acc[user.role] = (acc[user.role] || 0) + 1
+          return acc
+        }, {})
+        
+        console.log(`👥 User sync summary:
+          - Total users: ${data.users.length}
+          - Role distribution: ${Object.entries(roleCount).map(([role, count]) => `${role}: ${count}`).join(', ')}
+          - Database sync: ✅ Complete`)
+      } else {
+        console.warn('⚠️ No users returned or error occurred:', data?.error || 'Unknown error')
+        
+        // Try to load from sessionStorage as fallback
+        const cachedUsers = getSessionData('users')
+        if (cachedUsers) {
+          console.log('📱 Loading users from session storage as fallback')
+          const parsedUsers = JSON.parse(cachedUsers)
+          setUsers(parsedUsers)
+        }
+      }
+    } catch (error) {
+      console.error('❌ Failed to fetch users from database:', error)
+      
+      // Try to load from sessionStorage as fallback
+      const cachedUsers = getSessionData('users')
+      if (cachedUsers) {
+        console.log('📱 Loading users from session storage as fallback')
+        const parsedUsers = JSON.parse(cachedUsers)
+        setUsers(parsedUsers)
+      } else {
+        // If no cached data available, show error
+        toast({
+          title: "Error loading users",
+          description: "Failed to load users from database. Please try refreshing the page.",
+          variant: "destructive"
+        })
+      }
+    } finally {
+      setUsersLoading(false)
+    }
   }, [])
   
   const refreshContacts = useCallback(async () => { 
@@ -90,15 +195,15 @@ export const DatabaseProvider: React.FC<DatabaseProviderProps> = ({ children }) 
     }
     
     if (!superAdminService) {
-      console.log('No Supabase service, loading from localStorage')
-      const storedContacts = localStorage.getItem('contacts')
+      console.log('No Supabase service, loading from session storage')
+      const storedContacts = getSessionData('contacts')
       if (storedContacts) {
         try {
           const parsedContacts = JSON.parse(storedContacts)
           setContacts(parsedContacts)
-          console.log('Loaded contacts from localStorage:', parsedContacts.length)
+          console.log('Loaded contacts from session storage:', parsedContacts.length)
         } catch (error) {
-          console.error('Error parsing localStorage contacts:', error)
+          console.error('Error parsing session storage contacts:', error)
           setContacts([])
         }
       }
@@ -142,11 +247,11 @@ export const DatabaseProvider: React.FC<DatabaseProviderProps> = ({ children }) 
         // Update state with validated contacts
         setContacts(validContacts)
         
-        // Sync with localStorage immediately
-        localStorage.setItem('contacts', JSON.stringify(validContacts))
-        localStorage.setItem('lastContactSync', new Date().toISOString())
+        // Sync with session storage immediately
+        setSessionData('contacts', JSON.stringify(validContacts))
+        setSessionData('lastContactSync', new Date().toISOString())
         
-        console.log('✅ Contacts state and localStorage updated successfully')
+        console.log('✅ Contacts state and session storage updated successfully')
         
         // Log detailed sync information for debugging
         if (validContacts.length > 0) {
@@ -341,21 +446,33 @@ export const DatabaseProvider: React.FC<DatabaseProviderProps> = ({ children }) 
     }
   }, [currentUser, refreshContacts])
 
-  // Restore user session from localStorage on mount
+  // Restore user session from sessionStorage on mount (expires when browser closes)
   useEffect(() => {
     try {
-      const savedUser = localStorage.getItem('currentUser')
+      console.log('🔄 Initializing app and checking for active session...')
+      const savedUser = sessionStorage.getItem('currentUser')
       if (savedUser) {
         const user = JSON.parse(savedUser)
-        console.log('Restoring user session from localStorage:', user.name)
+        console.log('✅ Restoring active session for user:', user.name)
         setCurrentUser(user)
       } else {
-        console.log('No saved user session found')
+        console.log('📭 No active session found - user needs to login')
+        // Clear any old localStorage data for security
+        localStorage.removeItem('currentUser')
+        localStorage.removeItem('lastLoginTime')
+        localStorage.removeItem('loginMethod')
       }
     } catch (error) {
-      console.warn('Failed to restore user from localStorage:', error)
-      // Clear invalid data
+      console.warn('⚠️ Failed to restore session:', error)
+      // Clear invalid session data
+      sessionStorage.removeItem('currentUser')
       localStorage.removeItem('currentUser')
+    } finally {
+      // Mark initialization as complete after a brief delay to ensure UI is stable
+      setTimeout(() => {
+        setIsInitializing(false)
+        console.log('✅ App initialization complete')
+      }, 100)
     }
   }, [])
 
@@ -410,31 +527,10 @@ export const DatabaseProvider: React.FC<DatabaseProviderProps> = ({ children }) 
           console.warn('Error processing pending sync operations:', error)
         }
         
-        // Load users for admin/superadmin
+        // Load users for admin/superadmin using the new refreshUsers function
         if (currentUser.role === 'admin' || currentUser.role === 'superadmin') {
-          try {
-            console.log('Loading users from Supabase...')
-            const supabaseUsers = await superAdminService.getAllUsers()
-            
-            if (supabaseUsers && supabaseUsers.length > 0) {
-              const convertedUsers: User[] = supabaseUsers.map(dbUser => ({
-                id: dbUser.id,
-                name: dbUser.name,
-                email: dbUser.email,
-                username: dbUser.username,
-                password: '', // Never expose password
-                role: dbUser.role as UserRole,
-                position: dbUser.position,
-                employeeNumber: dbUser.employee_number,
-                avatar: dbUser.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(dbUser.name)}&background=3b82f6&color=fff`
-              }))
-              
-              console.log('Loaded users from Supabase:', convertedUsers.length)
-              setUsers(convertedUsers)
-            }
-          } catch (error) {
-            console.warn('Failed to load users from Supabase, using local data:', error)
-          }
+          console.log('Loading users from database using refreshUsers...')
+          await refreshUsers()
         }
         
         // Load contacts for all users
@@ -518,7 +614,7 @@ export const DatabaseProvider: React.FC<DatabaseProviderProps> = ({ children }) 
 
     // Load data when component mounts or user changes
     loadDataFromSupabase()
-  }, [currentUser]) // Depend on currentUser to reload when user changes
+  }, [currentUser, refreshUsers]) // Depend on currentUser and refreshUsers to reload when user changes
 
   const syncContactsToDatabase = async () => {
     if (!currentUser || !superAdminService) {
@@ -551,10 +647,10 @@ export const DatabaseProvider: React.FC<DatabaseProviderProps> = ({ children }) 
     }
   }
   
-  const refreshChangelog = useCallback(async () => { 
+  const refreshChangelog = async () => { 
     console.log('refreshChangelog called - loading from database')
     await loadChangelogFromDatabase()
-  }, [])
+  }
   
   const createUser = async (userData: Omit<User, 'id'>): Promise<User> => {
     const newUser = { ...userData, id: Date.now().toString() }
@@ -634,19 +730,22 @@ export const DatabaseProvider: React.FC<DatabaseProviderProps> = ({ children }) 
           }
           
           setCurrentUser(authenticatedUser)
-          // Persist user session to localStorage
-          localStorage.setItem('currentUser', JSON.stringify(authenticatedUser))
+          // Store session in sessionStorage (expires when browser closes)
+          sessionStorage.setItem('currentUser', JSON.stringify(authenticatedUser))
+          sessionStorage.setItem('lastLoginTime', new Date().toISOString())
+          sessionStorage.setItem('loginMethod', 'database')
+          
+          // Also store login info for audit purposes (persistent)
+          localStorage.setItem('lastSuccessfulLogin', new Date().toISOString())
+          localStorage.setItem('lastLoginUser', authenticatedUser.email)
+          
+          console.log('✅ Database user session saved to sessionStorage (expires on browser close)')
           await logAction('login', 'system', `User ${authenticatedUser.name} logged in from database`, authenticatedUser.id, authenticatedUser.name)
           
-          // Trigger contact refresh and cross-device sync after successful login
+          // Trigger contact refresh after successful login
           setTimeout(async () => {
             console.log('🔄 Refreshing contacts after successful database login...')
             await refreshContacts()
-            
-            // Perform cross-device sync check to ensure data consistency
-            setTimeout(async () => {
-              await checkCrossDeviceSync()
-            }, 1000)
           }, 500)
           
           return authenticatedUser
@@ -737,19 +836,22 @@ export const DatabaseProvider: React.FC<DatabaseProviderProps> = ({ children }) 
     if (matchedUser) {
       console.log('Default user login successful for:', matchedUser.user.name)
       setCurrentUser(matchedUser.user)
-      // Persist user session to localStorage
-      localStorage.setItem('currentUser', JSON.stringify(matchedUser.user))
+      // Store session in sessionStorage (expires when browser closes)
+      sessionStorage.setItem('currentUser', JSON.stringify(matchedUser.user))
+      sessionStorage.setItem('lastLoginTime', new Date().toISOString())
+      sessionStorage.setItem('loginMethod', 'default')
+      
+      // Also store login info for audit purposes (persistent)
+      localStorage.setItem('lastSuccessfulLogin', new Date().toISOString())
+      localStorage.setItem('lastLoginUser', matchedUser.user.email)
+      
+      console.log('✅ Default user session saved to sessionStorage (expires on browser close)')
       await logAction('login', 'system', `User ${matchedUser.user.name} logged in (default)`, matchedUser.user.id, matchedUser.user.name)
       
-      // Trigger contact refresh and cross-device sync after successful default login
+      // Trigger contact refresh after successful default login
       setTimeout(async () => {
         console.log('🔄 Refreshing contacts after successful default login...')
         await refreshContacts()
-        
-        // Perform cross-device sync check to ensure data consistency
-        setTimeout(async () => {
-          await checkCrossDeviceSync()
-        }, 1000)
       }, 500)
       
       return matchedUser.user
@@ -760,12 +862,46 @@ export const DatabaseProvider: React.FC<DatabaseProviderProps> = ({ children }) 
   }
   
   const logout = async () => {
-    console.log('Logout called - clearing user session')
+    console.log('🚪 Logout called - clearing user session')
+    
+    // Log action before clearing user
+    if (currentUser) {
+      await logAction('logout', 'system', `User ${currentUser.name} logged out`, currentUser.id, currentUser.name)
+    }
+    
     setCurrentUser(null)
-    // Clear user session from localStorage
-    localStorage.removeItem('currentUser')
+    
+    // Clear session data (sessionStorage expires on browser close anyway)
+    sessionStorage.removeItem('currentUser')
+    sessionStorage.removeItem('lastLoginTime')
+    sessionStorage.removeItem('loginMethod')
+    
+    // Clear temporary app data
+    sessionStorage.removeItem('contacts')
+    sessionStorage.removeItem('users')
+    sessionStorage.removeItem('changelog')
+    
+    // Keep audit trail but clear old persistent data
+    localStorage.removeItem('currentUser') // Remove any old persistent sessions
     localStorage.removeItem('wasLoggedIn')
-    console.log('User session cleared from localStorage')
+    localStorage.removeItem('contacts')
+    localStorage.removeItem('users')
+    localStorage.removeItem('changelog')
+    localStorage.removeItem('lastContactSync')
+    localStorage.removeItem('lastRealtimeSync')
+    localStorage.removeItem('pendingContactSync')
+    
+    // Clear component states
+    setContacts([])
+    setUsers([])
+    setChangelog([])
+    
+    console.log('✅ User session cleared - will require login on next browser session')
+    
+    // Show logout confirmation
+    setTimeout(() => {
+      console.log('🔄 User has been logged out successfully')
+    }, 100)
   }
   
   const createContact = async (contactData: Omit<Contact, 'id' | 'ownerId' | 'ownerName' | 'createdAt'>): Promise<Contact> => {
@@ -1067,38 +1203,45 @@ export const DatabaseProvider: React.FC<DatabaseProviderProps> = ({ children }) 
         return
       }
       
-      if (data) {
-        const transformedChangelog: ChangelogEntry[] = data.map((entry: {
+      if (data && data.success && data.changelog) {
+        // The new get_changelog function returns a structured response
+        const transformedChangelog: ChangelogEntry[] = data.changelog.map((entry: {
           id: string,
-          entry_timestamp: string,
-          user_id: string,
-          user_name: string,
-          user_role: string,
+          timestamp: string,
+          userId: string,
+          userName: string,
+          userRole: string,
           action: string,
           entity: string,
-          entity_id: string | null,
-          entity_name: string | null,
+          entityId: string | null,
+          entityName: string | null,
           description: string,
           details: string | null
         }) => ({
           id: entry.id,
-          timestamp: entry.entry_timestamp,
-          userId: entry.user_id,
-          userName: entry.user_name,
-          userRole: entry.user_role as UserRole,
+          timestamp: entry.timestamp,
+          userId: entry.userId,
+          userName: entry.userName,
+          userRole: entry.userRole as UserRole,
           action: entry.action,
           entity: entry.entity,
-          entityId: entry.entity_id,
-          entityName: entry.entity_name,
+          entityId: entry.entityId,
+          entityName: entry.entityName,
           description: entry.description,
           details: entry.details
         }))
         
         setChangelog(transformedChangelog)
         console.log('✅ Loaded changelog from database:', transformedChangelog.length, 'entries')
+      } else {
+        console.warn('⚠️ No changelog data returned or error occurred:', data?.error || 'Unknown error')
+        // Set empty changelog if no data
+        setChangelog([])
       }
     } catch (error) {
       console.error('❌ Error loading changelog from database:', error)
+      // Set empty changelog on error
+      setChangelog([])
     }
   }
   
@@ -1393,7 +1536,7 @@ export const DatabaseProvider: React.FC<DatabaseProviderProps> = ({ children }) 
   }
 
   // Force refresh all data from database (for troubleshooting sync issues)
-  const forceRefreshFromDatabase = useCallback(async () => {
+  const forceRefreshFromDatabase = async () => {
     console.log('🔄 Force refreshing all data from database...')
     
     if (!currentUser || !superAdminService) {
@@ -1402,12 +1545,6 @@ export const DatabaseProvider: React.FC<DatabaseProviderProps> = ({ children }) 
     }
     
     try {
-      // Clear localStorage to force fresh database fetch
-      console.log('🗑️ Clearing localStorage cache for fresh sync...')
-      localStorage.removeItem('contacts')
-      localStorage.removeItem('lastContactSync')
-      localStorage.removeItem('lastRealtimeSync')
-      
       // Refresh contacts with detailed logging
       await refreshContacts()
       
@@ -1418,7 +1555,6 @@ export const DatabaseProvider: React.FC<DatabaseProviderProps> = ({ children }) 
       // Clear any pending sync operations
       localStorage.removeItem('pendingContactSync')
       localStorage.setItem('lastForceSync', new Date().toISOString())
-      localStorage.setItem('deviceSyncComplete', new Date().toISOString())
       
       toast({
         title: "🔄 Database Sync Complete",
@@ -1436,33 +1572,7 @@ export const DatabaseProvider: React.FC<DatabaseProviderProps> = ({ children }) 
         duration: 5000,
       })
     }
-  }, [currentUser, refreshContacts, refreshUsers, refreshChangelog])
-
-  // Check if this is a fresh device/browser and needs full sync
-  const checkCrossDeviceSync = useCallback(async () => {
-    if (!currentUser || !superAdminService) return
-    
-    const lastDeviceSync = localStorage.getItem('deviceSyncComplete')
-    const lastDatabaseSync = localStorage.getItem('lastDatabaseSync')
-    
-    // If no device sync record or it's been more than 1 hour since last database sync
-    const shouldForceFreshSync = !lastDeviceSync || 
-      !lastDatabaseSync || 
-      (Date.now() - new Date(lastDatabaseSync).getTime()) > (60 * 60 * 1000)
-    
-    if (shouldForceFreshSync) {
-      console.log('🔄 Performing cross-device sync check...')
-      
-      toast({
-        title: "🔄 Syncing Data",
-        description: "Ensuring you have the latest data across all devices...",
-        duration: 2000,
-      })
-      
-      // Force fresh database sync
-      await forceRefreshFromDatabase()
-    }
-  }, [currentUser, forceRefreshFromDatabase])
+  }
 
   const value: DatabaseContextType = {
     users,
@@ -1472,6 +1582,7 @@ export const DatabaseProvider: React.FC<DatabaseProviderProps> = ({ children }) 
     usersLoading,
     contactsLoading,
     changelogLoading,
+    isInitializing,
     currentUser,
     refreshUsers,
     refreshContacts,

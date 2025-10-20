@@ -1,7 +1,9 @@
-import React, { useState } from 'react';
-import { Search, Edit2, Trash2, Download, FileText } from 'lucide-react';
+import React, { useState, useCallback } from 'react';
+import { Edit2, Trash2, Download, FileText } from 'lucide-react';
 import { Contact, UserRole } from '../types';
 import { exportToCSV } from '../utils/csvExport';
+import { AdvancedContactFilter } from './AdvancedContactFilter';
+import { ContactFilters, applyContactFilters, createEmptyFilters } from '../utils/contactFilters';
 
 interface ContactListProps {
   contacts: Contact[];
@@ -14,18 +16,20 @@ interface ContactListProps {
 }
 
 export const ContactList: React.FC<ContactListProps> = ({ contacts, currentUserId, userRole, onEdit, onDelete, onExport, onVCFDownload }) => {
-  const [searchTerm, setSearchTerm] = useState('');
   const [sortField, setSortField] = useState<keyof Contact>('firstName');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
   const [selectedContact, setSelectedContact] = useState<Contact | null>(null);
   const [selectedContacts, setSelectedContacts] = useState<Set<string>>(new Set());
+  const [filters, setFilters] = useState<ContactFilters>(createEmptyFilters());
 
-  const filteredContacts = contacts.filter(contact =>
-    Object.values(contact).some(value =>
-      value.toString().toLowerCase().includes(searchTerm.toLowerCase())
-    )
-  );
+  // Handle filter changes from the advanced filter component
+  const handleFilterChange = useCallback((newFilters: ContactFilters) => {
+    setFilters(newFilters);
+  }, []);
+
+  // Apply filters to contacts
+  const filteredContacts = applyContactFilters(contacts, filters);
 
   const sortedContacts = [...filteredContacts].sort((a, b) => {
     const aVal = a[sortField];
@@ -114,24 +118,29 @@ END:VCARD`;
   return (
     <div className="bg-gray-50 dark:bg-gray-900 rounded-xl shadow-lg p-6 transition-colors border border-gray-200 dark:border-gray-800">
       <div className="flex flex-col md:flex-row justify-between items-center mb-6 gap-4">
-        <div className="relative flex-1 w-full">
-          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-500 dark:text-gray-400 w-5 h-5" />
-          <input
-            type="text"
-            placeholder="Search contacts..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full pl-10 pr-4 py-2 border border-gray-400 dark:border-gray-600 rounded-lg bg-white dark:bg-black text-black dark:text-white focus:ring-2 focus:ring-black dark:focus:ring-white transition-colors"
-          />
+        <div className="flex-1">
+          <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-2">Personal Contacts</h2>
+          <p className="text-sm text-gray-600 dark:text-gray-400">
+            {filteredContacts.length} contact{filteredContacts.length !== 1 ? 's' : ''} found
+          </p>
         </div>
         
-        <button
-          onClick={handleExport}
-          className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition border border-blue-500"
-        >
-          <Download className="w-4 h-4" />
-          Export CSV
-        </button>
+        <div className="flex items-center gap-2">
+          {/* Advanced Filter Component */}
+          <AdvancedContactFilter
+            contacts={contacts}
+            userRole={userRole}
+            onFilterChange={handleFilterChange}
+          />
+
+          <button
+            onClick={handleExport}
+            className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition border border-blue-500"
+          >
+            <Download className="w-4 h-4" />
+            Export CSV
+          </button>
+        </div>
       </div>
 
       {selectedContacts.size > 0 && (

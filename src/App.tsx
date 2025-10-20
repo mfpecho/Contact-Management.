@@ -18,27 +18,35 @@ const App = () => {
   // Add beforeunload handler to sync data when closing app
   useEffect(() => {
     const handleBeforeUnload = (event: BeforeUnloadEvent) => {
-      console.log('App is closing - ensuring data sync...');
+      console.log('🔄 Page unloading - syncing data to localStorage...');
       
-      // Get current user and contacts from localStorage
-      const currentUser = localStorage.getItem('currentUser');
-      const contacts = localStorage.getItem('contacts');
+      // Sync current data to localStorage for backup
+      const currentUser = sessionStorage.getItem('currentUser');
+      const contacts = sessionStorage.getItem('contacts');
       
       if (currentUser && contacts) {
-        console.log('User session and contacts found in localStorage - data is already synced');
+        console.log('💾 Backing up session data before page unload');
+        localStorage.setItem('lastSessionData', JSON.stringify({
+          timestamp: new Date().toISOString(),
+          contactCount: JSON.parse(contacts).length,
+          userEmail: JSON.parse(currentUser).email
+        }));
       }
-      
-      // Note: We can't perform async operations in beforeunload, but we've been 
-      // syncing data in real-time, so localStorage should be up to date
-      console.log('Data sync verification completed');
     };
 
-    // Add event listener
+    const handleUnload = () => {
+      console.log('🚪 Browser/tab closing - session will expire');
+      // Session data in sessionStorage will automatically be cleared
+      // when the browser/tab is closed
+    };
+
+    // Listen for browser/tab close events
     window.addEventListener('beforeunload', handleBeforeUnload);
-    
-    // Cleanup function
+    window.addEventListener('unload', handleUnload);
+
     return () => {
       window.removeEventListener('beforeunload', handleBeforeUnload);
+      window.removeEventListener('unload', handleUnload);
     };
   }, []);
   
