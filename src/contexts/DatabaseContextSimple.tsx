@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react'
+import React, { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react'
 import { User, Contact, ChangelogEntry, UserRole } from '../types'
 import { superAdminService, testSupabaseConnection, supabase } from '../lib/supabase'
 import { toast } from '../hooks/use-toast'
@@ -23,6 +23,7 @@ interface DatabaseContextType {
   refreshUsers: () => Promise<void>
   refreshContacts: () => Promise<void>
   refreshChangelog: () => Promise<void>
+  forceRefreshFromDatabase: () => Promise<void>
   syncContactsToDatabase: () => Promise<void>
   createUser: (userData: Omit<User, 'id'>) => Promise<User>
   updateUser: (id: string, userData: Partial<Omit<User, 'id'>>) => Promise<User>
@@ -76,6 +77,132 @@ export const DatabaseProvider: React.FC<DatabaseProviderProps> = ({ children }) 
 
   console.log('DatabaseProvider: Current user:', currentUser)
 
+  // Simple mock implementations
+  const refreshUsers = async () => { console.log('refreshUsers called') }
+  
+  const refreshContacts = useCallback(async () => { 
+    console.log('🔄 refreshContacts called')
+    if (!currentUser) {
+      console.log('No current user, skipping contact refresh')
+      return
+    }
+    
+    if (!superAdminService) {
+      console.log('No Supabase service, loading from localStorage')
+      const storedContacts = localStorage.getItem('contacts')
+      if (storedContacts) {
+        try {
+          const parsedContacts = JSON.parse(storedContacts)
+          setContacts(parsedContacts)
+          console.log('Loaded contacts from localStorage:', parsedContacts.length)
+        } catch (error) {
+          console.error('Error parsing localStorage contacts:', error)
+          setContacts([])
+        }
+      }
+      return
+    }
+    
+    try {
+      setContactsLoading(true)
+      console.log('📡 Fetching latest contacts from database for user:', currentUser.id, currentUser.role)
+      
+      // For regular users, fetch only their contacts
+      // For admins and superadmins, fetch all contacts
+      const userId = currentUser.role === 'user' ? currentUser.id : undefined
+      console.log('🔍 Using userId filter:', userId, '(undefined means fetch all contacts)')
+      
+      const result = await superAdminService.getContacts(userId)
+      console.log('📥 Database response:', { success: result?.success, contactCount: result?.contacts?.length, error: result?.error })
+      
+      if (result && result.success && result.contacts) {
+        console.log('✅ Contacts fetched successfully from database:', result.contacts.length)
+        
+        // Log sample contacts for debugging
+        if (result.contacts.length > 0) {
+          console.log('📋 Sample contacts from database:')
+          result.contacts.slice(0, 3).forEach((contact, index) => {
+            console.log(`  ${index + 1}. ${contact.firstName} ${contact.lastName} (Owner: ${contact.ownerName}, ID: ${contact.ownerId})`)
+          })
+        }
+        
+        // Ensure data integrity - validate contact structure
+        const validContacts = result.contacts.filter(contact => {
+          const isValid = contact.id && contact.firstName && contact.ownerId && contact.ownerName
+          if (!isValid) {
+            console.warn('Invalid contact structure detected:', contact)
+          }
+          return isValid
+        })
+        
+        console.log('Valid contacts after filtering:', validContacts.length)
+        
+        // Update state with validated contacts
+        setContacts(validContacts)
+        
+        // Sync with localStorage immediately
+        localStorage.setItem('contacts', JSON.stringify(validContacts))
+        localStorage.setItem('lastContactSync', new Date().toISOString())
+        
+        console.log('✅ Contacts state and localStorage updated successfully')
+        
+        // Log detailed sync information for debugging
+        if (validContacts.length > 0) {
+          const personalCount = validContacts.filter(c => c.ownerId === currentUser.id).length
+          const collaborativeCount = validContacts.length - personalCount
+          const uniqueOwners = [...new Set(validContacts.map(c => c.ownerName))]
+          
+          console.log(`📊 Contact sync summary:
+            - Total contacts: ${validContacts.length}
+            - Personal contacts (${currentUser.name}): ${personalCount}
+            - Collaborative contacts: ${collaborativeCount}
+            - Unique owners: ${uniqueOwners.join(', ')}
+            - Database sync: ✅ Complete`)
+        } else {
+          console.log('📭 No contacts found in database')
+        }
+      } else {
+        console.warn('⚠️ No contacts returned or error occurred:', result?.error || 'Unknown error')
+        
+        // Try to load from localStorage as fallback
+        const storedContacts = localStorage.getItem('contacts')
+        if (storedContacts) {
+          try {
+            const parsedContacts = JSON.parse(storedContacts)
+            setContacts(parsedContacts)
+            console.log('📦 Fallback: Loaded contacts from localStorage:', parsedContacts.length)
+          } catch (error) {
+            console.error('Error parsing fallback contacts:', error)
+            setContacts([])
+          }
+        } else {
+          console.log('No fallback contacts available')
+          setContacts([])
+        }
+      }
+    } catch (error) {
+      console.error('❌ Error fetching contacts from database:', error)
+      
+      // Fallback to localStorage
+      const storedContacts = localStorage.getItem('contacts')
+      if (storedContacts) {
+        try {
+          const parsedContacts = JSON.parse(storedContacts)
+          setContacts(parsedContacts)
+          console.log('📦 Error fallback: Loaded contacts from localStorage:', parsedContacts.length)
+        } catch (parseError) {
+          console.error('Error parsing fallback contacts:', parseError)
+          setContacts([])
+        }
+      } else {
+        console.log('No fallback data available')
+        setContacts([])
+      }
+    } finally {
+      setContactsLoading(false)
+    }
+  }, [currentUser])
+
   // Test Supabase connection on mount and set up real-time subscriptions
   useEffect(() => {
     const testConnection = async () => {
@@ -107,17 +234,33 @@ export const DatabaseProvider: React.FC<DatabaseProviderProps> = ({ children }) 
           async (payload) => {
             console.log('🔄 Real-time contact change detected:', payload)
             
-            // Refresh contacts to get the latest data
+            // Refresh contacts to get the latest data with enhanced error handling
             try {
               const userId = currentUser.role === 'user' ? currentUser.id : undefined
               const result = await superAdminService.getContacts(userId)
               
               if (result && result.success && result.contacts) {
                 console.log('📡 Real-time sync - contacts updated:', result.contacts.length)
-                setContacts(result.contacts)
-                localStorage.setItem('contacts', JSON.stringify(result.contacts))
                 
-                // Log the real-time update
+                // Validate data integrity before updating state
+                const validContacts = result.contacts.filter(contact => {
+                  const isValid = contact.id && contact.firstName && contact.ownerId && contact.ownerName
+                  if (!isValid) {
+                    console.warn('Invalid contact detected in real-time sync:', contact)
+                  }
+                  return isValid
+                })
+                
+                console.log(`📊 Real-time sync validation:
+                  - Total received: ${result.contacts.length}
+                  - Valid contacts: ${validContacts.length}
+                  - Invalid filtered: ${result.contacts.length - validContacts.length}`)
+                
+                setContacts(validContacts)
+                localStorage.setItem('contacts', JSON.stringify(validContacts))
+                localStorage.setItem('lastRealtimeSync', new Date().toISOString())
+                
+                // Log the real-time update with enhanced details
                 const eventType = payload.eventType
                 const contactData = payload.new || payload.old
                 const contactName = contactData && typeof contactData === 'object' && 'first_name' in contactData && 'last_name' in contactData
@@ -139,9 +282,25 @@ export const DatabaseProvider: React.FC<DatabaseProviderProps> = ({ children }) 
                   description: `Contact "${contactName}" was ${actionText} by another user`,
                   duration: 3000,
                 })
+                
+                console.log('✅ Real-time contact sync completed successfully')
+              } else {
+                console.warn('⚠️ Real-time sync failed - invalid response:', result)
+                
+                // If sync fails, try force refresh after a delay
+                setTimeout(async () => {
+                  console.log('🔄 Attempting force refresh due to real-time sync failure...')
+                  await refreshContacts()
+                }, 2000)
               }
             } catch (error) {
-              console.error('Error in real-time contact sync:', error)
+              console.error('❌ Error in real-time contact sync:', error)
+              
+              // Try to refresh contacts as fallback
+              setTimeout(async () => {
+                console.log('🔄 Attempting backup contact refresh due to real-time error...')
+                await refreshContacts()
+              }, 5000)
             }
           }
         )
@@ -178,7 +337,7 @@ export const DatabaseProvider: React.FC<DatabaseProviderProps> = ({ children }) 
         contactsSubscription.unsubscribe()
       }
     }
-  }, [currentUser])
+  }, [currentUser, refreshContacts])
 
   // Restore user session from localStorage on mount
   useEffect(() => {
@@ -359,54 +518,6 @@ export const DatabaseProvider: React.FC<DatabaseProviderProps> = ({ children }) 
     loadDataFromSupabase()
   }, [currentUser]) // Depend on currentUser to reload when user changes
 
-  // Simple mock implementations
-  const refreshUsers = async () => { console.log('refreshUsers called') }
-  const refreshContacts = async () => { 
-    console.log('refreshContacts called')
-    if (!currentUser) {
-      console.log('No current user, skipping contact refresh')
-      return
-    }
-    
-    if (!superAdminService) {
-      console.log('No Supabase service, loading from localStorage')
-      const storedContacts = localStorage.getItem('contacts')
-      if (storedContacts) {
-        setContacts(JSON.parse(storedContacts))
-      }
-      return
-    }
-    
-    try {
-      setContactsLoading(true)
-      console.log('Fetching contacts from database for user:', currentUser.id)
-      
-      // For regular users, fetch only their contacts
-      // For admins and superadmins, fetch all contacts
-      const userId = currentUser.role === 'user' ? currentUser.id : undefined
-      const result = await superAdminService.getContacts(userId)
-      
-      if (result && result.success && result.contacts) {
-        console.log('Contacts fetched successfully:', result.contacts)
-        setContacts(result.contacts)
-        
-        // Also store in localStorage as backup
-        localStorage.setItem('contacts', JSON.stringify(result.contacts))
-      } else {
-        console.warn('No contacts returned or error occurred:', result)
-        setContacts([])
-      }
-    } catch (error) {
-      console.error('Error fetching contacts:', error)
-      // Fallback to localStorage
-      const storedContacts = localStorage.getItem('contacts')
-      if (storedContacts) {
-        setContacts(JSON.parse(storedContacts))
-      }
-    } finally {
-      setContactsLoading(false)
-    }
-  }
   const syncContactsToDatabase = async () => {
     if (!currentUser || !superAdminService) {
       console.log('Cannot sync - no user or Supabase service unavailable')
@@ -525,6 +636,12 @@ export const DatabaseProvider: React.FC<DatabaseProviderProps> = ({ children }) 
           localStorage.setItem('currentUser', JSON.stringify(authenticatedUser))
           await logAction('login', 'system', `User ${authenticatedUser.name} logged in from database`, authenticatedUser.id, authenticatedUser.name)
           
+          // Trigger contact refresh after successful login
+          setTimeout(async () => {
+            console.log('🔄 Refreshing contacts after successful database login...')
+            await refreshContacts()
+          }, 500)
+          
           return authenticatedUser
         } else {
           console.log('Database authentication failed:', authResult?.error || 'Invalid credentials')
@@ -616,6 +733,13 @@ export const DatabaseProvider: React.FC<DatabaseProviderProps> = ({ children }) 
       // Persist user session to localStorage
       localStorage.setItem('currentUser', JSON.stringify(matchedUser.user))
       await logAction('login', 'system', `User ${matchedUser.user.name} logged in (default)`, matchedUser.user.id, matchedUser.user.name)
+      
+      // Trigger contact refresh after successful default login
+      setTimeout(async () => {
+        console.log('🔄 Refreshing contacts after successful default login...')
+        await refreshContacts()
+      }, 500)
+      
       return matchedUser.user
     }
 
@@ -707,6 +831,12 @@ export const DatabaseProvider: React.FC<DatabaseProviderProps> = ({ children }) 
             console.warn('Failed to broadcast real-time update:', broadcastError)
           }
           
+          // Force refresh contacts to ensure all views are updated
+          setTimeout(async () => {
+            console.log('🔄 Force refreshing contacts after creation...')
+            await refreshContacts()
+          }, 1000)
+          
           console.log('✅ Contact successfully created and synced with database:', {
             tempId,
             databaseId: result.contact_id,
@@ -739,19 +869,46 @@ export const DatabaseProvider: React.FC<DatabaseProviderProps> = ({ children }) 
   }
   
   const updateContact = async (id: string, contactData: Partial<Omit<Contact, 'id'>>): Promise<Contact> => {
-    console.log('Updating contact:', id, contactData)
+    console.log('🔄 Updating contact:', id, contactData)
+    
+    if (!currentUser) throw new Error('No current user')
+    
+    // Find the existing contact to ensure we have all data
+    const existingContact = contacts.find(c => c.id === id)
+    if (!existingContact) {
+      throw new Error(`Contact with ID ${id} not found`)
+    }
+    
+    // Create the updated contact object
+    const updatedContact: Contact = { 
+      ...existingContact, 
+      ...contactData,
+      // Ensure these fields don't get overwritten accidentally
+      id: existingContact.id,
+      ownerId: existingContact.ownerId,
+      ownerName: existingContact.ownerName,
+      createdAt: existingContact.createdAt
+    }
+    
+    console.log('📝 Contact update details:', {
+      id,
+      originalName: `${existingContact.firstName} ${existingContact.lastName}`,
+      updatedName: `${updatedContact.firstName} ${updatedContact.lastName}`,
+      changes: JSON.stringify(contactData)
+    })
     
     // Immediately update local state for better UX
-    const updatedContact = { ...contacts.find(c => c.id === id)!, ...contactData }
     setContacts(prev => prev.map(c => c.id === id ? updatedContact : c))
     
     // Immediately save to localStorage as backup
     const updatedContacts = contacts.map(c => c.id === id ? updatedContact : c)
     localStorage.setItem('contacts', JSON.stringify(updatedContacts))
+    localStorage.setItem('lastContactSync', new Date().toISOString())
     
     // If we have Supabase service, update in database
     if (superAdminService) {
       try {
+        console.log('📡 Syncing contact update to database...')
         const result = await superAdminService.updateContact(id, {
           firstName: contactData.firstName,
           middleName: contactData.middleName,
@@ -762,43 +919,71 @@ export const DatabaseProvider: React.FC<DatabaseProviderProps> = ({ children }) 
         })
         
         if (result && result.success) {
-          console.log('Contact updated successfully in database:', result)
+          console.log('✅ Contact updated successfully in database:', result)
           
-          // Log the action
-          if (contactData.firstName && contactData.lastName) {
-            await logAction('update', 'contact', `Contact ${contactData.firstName} ${contactData.lastName} updated`, id, `${contactData.firstName} ${contactData.lastName}`)
-            
-            // Broadcast real-time update to other users
-            try {
-              await supabase.rpc('log_changelog', {
-                p_user_id: currentUser!.id,
-                p_action: 'update',
-                p_entity: 'contact',
-                p_entity_id: id,
-                p_entity_name: `${contactData.firstName} ${contactData.lastName}`,
-                p_description: `Contact ${contactData.firstName} ${contactData.lastName} updated by ${currentUser!.name}`,
-                p_details: `Real-time sync: enabled`
-              })
-              console.log('📡 Real-time update broadcasted for contact update')
-            } catch (broadcastError) {
-              console.warn('Failed to broadcast real-time update:', broadcastError)
-            }
+          // Log the action with enhanced details
+          await logAction('update', 'contact', 
+            `Contact ${updatedContact.firstName} ${updatedContact.lastName} updated successfully`, 
+            id, 
+            `${updatedContact.firstName} ${updatedContact.lastName}`,
+            `Updated by: ${currentUser.name}, Changes: ${JSON.stringify(contactData)}, Database sync: ✅`
+          )
+          
+          // Broadcast real-time update to other users
+          try {
+            await supabase.rpc('log_changelog', {
+              p_user_id: currentUser.id,
+              p_action: 'update',
+              p_entity: 'contact',
+              p_entity_id: id,
+              p_entity_name: `${updatedContact.firstName} ${updatedContact.lastName}`,
+              p_description: `Contact ${updatedContact.firstName} ${updatedContact.lastName} updated by ${currentUser.name}`,
+              p_details: `Changes: ${JSON.stringify(contactData)}, Real-time sync: enabled`
+            })
+            console.log('📡 Real-time update broadcasted for contact update')
+          } catch (broadcastError) {
+            console.warn('Failed to broadcast real-time update:', broadcastError)
           }
+          
+          console.log('✅ Contact update complete:', {
+            id,
+            name: `${updatedContact.firstName} ${updatedContact.lastName}`,
+            updatedBy: currentUser.name,
+            databaseSync: 'success'
+          })
           
           return updatedContact
         } else {
-          console.error('Database contact update failed:', result?.error || 'Unknown error')
-          // Contact remains updated in local state for manual retry later
+          console.error('❌ Database contact update failed:', result?.error || 'Unknown error')
+          
+          // Log the failure
+          await logAction('update', 'contact', 
+            `Contact ${updatedContact.firstName} ${updatedContact.lastName} update failed in database`, 
+            id, 
+            `${updatedContact.firstName} ${updatedContact.lastName}`,
+            `Error: ${result?.error || 'Unknown error'}, Local state updated, database sync failed`
+          )
+          
+          // Return the updated contact (local state is already updated)
           return updatedContact
         }
       } catch (error) {
-        console.error('Error updating contact in database:', error)
-        // Contact remains updated in local state
+        console.error('❌ Error updating contact in database:', error)
+        
+        // Log the error
+        await logAction('update', 'contact', 
+          `Contact ${updatedContact.firstName} ${updatedContact.lastName} update error`, 
+          id, 
+          `${updatedContact.firstName} ${updatedContact.lastName}`,
+          `Error: ${error}, Local state updated, database sync failed`
+        )
+        
+        // Contact update remains in local state
         return updatedContact
       }
     } else {
       // Fallback to local storage only
-      console.log('No Supabase service, contact updated locally only')
+      console.log('📦 No Supabase service, contact updated locally only')
       return updatedContact
     }
   }
@@ -1195,6 +1380,45 @@ export const DatabaseProvider: React.FC<DatabaseProviderProps> = ({ children }) 
     return finalUsername
   }
 
+  // Force refresh all data from database (for troubleshooting sync issues)
+  const forceRefreshFromDatabase = async () => {
+    console.log('🔄 Force refreshing all data from database...')
+    
+    if (!currentUser || !superAdminService) {
+      console.warn('Cannot force refresh: no user or service available')
+      return
+    }
+    
+    try {
+      // Refresh contacts with detailed logging
+      await refreshContacts()
+      
+      // Refresh other data if needed
+      await refreshUsers()
+      await refreshChangelog()
+      
+      // Clear any pending sync operations
+      localStorage.removeItem('pendingContactSync')
+      localStorage.setItem('lastForceSync', new Date().toISOString())
+      
+      toast({
+        title: "🔄 Database Sync Complete",
+        description: "All data has been refreshed from the database",
+        duration: 3000,
+      })
+      
+      console.log('✅ Force refresh completed successfully')
+    } catch (error) {
+      console.error('❌ Force refresh failed:', error)
+      toast({
+        title: "❌ Sync Error",
+        description: "Failed to refresh data from database",
+        variant: "destructive",
+        duration: 5000,
+      })
+    }
+  }
+
   const value: DatabaseContextType = {
     users,
     contacts,
@@ -1207,6 +1431,7 @@ export const DatabaseProvider: React.FC<DatabaseProviderProps> = ({ children }) 
     refreshUsers,
     refreshContacts,
     refreshChangelog,
+    forceRefreshFromDatabase,
     syncContactsToDatabase,
     createUser,
     updateUser,

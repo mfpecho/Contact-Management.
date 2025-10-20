@@ -16,6 +16,8 @@ if (import.meta.env.DEV) {
       createBirthdayTestContact: (firstName: string, lastName: string, daysFromNow: number, userId?: string) => Promise<unknown>
       getTestContacts: (userId?: string) => Promise<unknown>
       testContactAccuracy: () => Promise<unknown>
+      debugContactSync: () => Promise<unknown>
+      forceRefreshContacts: () => Promise<unknown>
     }
     
     w.testAuth = async (email: string, password: string) => {
@@ -203,7 +205,127 @@ if (import.meta.env.DEV) {
       }
     }
     
-    console.log('Debug functions available: testAuth(email, password), debugUser(email), createTestUser(email, password, name), createTestContact(firstName, lastName, phone, company, userId), createBirthdayTestContact(firstName, lastName, daysFromNow, userId), getTestContacts(userId), testContactAccuracy()')
+    // Advanced debugging function for contact synchronization
+    w.debugContactSync = async () => {
+      console.log('🔍 CONTACT SYNC DEBUG STARTING...')
+      
+      try {
+        const currentUserStr = localStorage.getItem('currentUser')
+        if (!currentUserStr) {
+          console.error('❌ No current user logged in')
+          return { error: 'No user logged in' }
+        }
+        
+        const currentUser = JSON.parse(currentUserStr)
+        console.log('👤 Current user:', currentUser.name, 'Role:', currentUser.role, 'ID:', currentUser.id)
+        
+        // Check localStorage contacts
+        const localContacts = localStorage.getItem('contacts')
+        const parsedLocalContacts = localContacts ? JSON.parse(localContacts) : []
+        console.log('📦 localStorage contacts:', parsedLocalContacts.length)
+        
+        // Get database contacts
+        console.log('📡 Fetching from database...')
+        const userId = currentUser.role === 'user' ? currentUser.id : undefined
+        const dbResult = await superAdminService.getContacts(userId)
+        
+        console.log('💾 Database response:', {
+          success: dbResult?.success,
+          contactCount: dbResult?.contacts?.length,
+          error: dbResult?.error
+        })
+        
+        if (dbResult?.success && dbResult?.contacts) {
+          console.log('📊 Database vs localStorage comparison:')
+          console.log('  Database contacts:', dbResult.contacts.length)
+          console.log('  localStorage contacts:', parsedLocalContacts.length)
+          
+          // Show sample contacts from both sources
+          console.log('\n📋 Sample database contacts:')
+          dbResult.contacts.slice(0, 3).forEach((contact, i) => {
+            console.log(`  ${i + 1}. ${contact.firstName} ${contact.lastName} (Owner: ${contact.ownerName})`)
+          })
+          
+          console.log('\n📋 Sample localStorage contacts:')
+          parsedLocalContacts.slice(0, 3).forEach((contact, i) => {
+            console.log(`  ${i + 1}. ${contact.firstName} ${contact.lastName} (Owner: ${contact.ownerName})`)
+          })
+          
+          // Check for personal vs collaborative
+          const personalDb = dbResult.contacts.filter(c => c.ownerId === currentUser.id)
+          const collaborativeDb = dbResult.contacts.filter(c => c.ownerId !== currentUser.id)
+          
+          console.log('\n🎯 Contact filtering:')
+          console.log('  Personal contacts (database):', personalDb.length)
+          console.log('  Collaborative contacts (database):', collaborativeDb.length)
+          
+          return {
+            currentUser,
+            localStorage: parsedLocalContacts,
+            database: dbResult.contacts,
+            personal: personalDb,
+            collaborative: collaborativeDb
+          }
+        } else {
+          console.error('❌ Failed to fetch from database')
+          return { error: 'Database fetch failed', dbResult }
+        }
+      } catch (error) {
+        console.error('❌ Contact sync debug failed:', error)
+        return { error: error.message }
+      }
+    }
+    
+    // Force refresh contacts function
+    w.forceRefreshContacts = async () => {
+      console.log('🔄 FORCE REFRESH CONTACTS...')
+      
+      try {
+        const currentUserStr = localStorage.getItem('currentUser')
+        if (!currentUserStr) {
+          console.error('❌ No current user logged in')
+          return { error: 'No user logged in' }
+        }
+        
+        const currentUser = JSON.parse(currentUserStr)
+        const userId = currentUser.role === 'user' ? currentUser.id : undefined
+        
+        console.log('📡 Fetching latest contacts from database...')
+        const result = await superAdminService.getContacts(userId)
+        
+        if (result?.success && result?.contacts) {
+          console.log('✅ Contacts fetched:', result.contacts.length)
+          
+          // Update localStorage
+          localStorage.setItem('contacts', JSON.stringify(result.contacts))
+          console.log('📦 localStorage updated')
+          
+          // Show contact summary
+          const personal = result.contacts.filter(c => c.ownerId === currentUser.id)
+          const collaborative = result.contacts.filter(c => c.ownerId !== currentUser.id)
+          
+          console.log('📊 Refresh summary:')
+          console.log('  Total contacts:', result.contacts.length)
+          console.log('  Personal contacts:', personal.length)
+          console.log('  Collaborative contacts:', collaborative.length)
+          
+          return {
+            total: result.contacts.length,
+            personal: personal.length,
+            collaborative: collaborative.length,
+            contacts: result.contacts
+          }
+        } else {
+          console.error('❌ Force refresh failed:', result)
+          return { error: 'Force refresh failed', result }
+        }
+      } catch (error) {
+        console.error('❌ Force refresh error:', error)
+        return { error: error.message }
+      }
+    }
+    
+    console.log('Debug functions available: testAuth(email, password), debugUser(email), createTestUser(email, password, name), createTestContact(firstName, lastName, phone, company, userId), createBirthdayTestContact(firstName, lastName, daysFromNow, userId), getTestContacts(userId), testContactAccuracy(), debugContactSync(), forceRefreshContacts()')
   })
 }
 
