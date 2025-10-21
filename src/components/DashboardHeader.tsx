@@ -289,7 +289,7 @@ export const DashboardHeader: React.FC<DashboardHeaderProps> = ({
                       {user.role === 'superadmin' ? 'SA' : 'ADM'}
                     </span>
                   )}
-                </div>
+                </div>``
               </div>
               <p className="text-xs sm:text-sm text-gray-600 dark:text-gray-400 truncate">
                 {getWelcomeMessage()}
@@ -298,6 +298,12 @@ export const DashboardHeader: React.FC<DashboardHeaderProps> = ({
           </div>
           
           <div className="flex items-center gap-3 sm:gap-4 flex-shrink-0">
+            {/* Mobile Live Indicator */}
+            <div className="sm:hidden flex items-center gap-1 px-2 py-1 bg-green-100 dark:bg-green-900 rounded-full">
+              <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+              <span className="text-xs text-green-700 dark:text-green-300 font-medium">Live</span>
+            </div>
+            
             {/* Desktop Role Badge */}
             <div className="hidden sm:block">
               {getRoleBadge()}

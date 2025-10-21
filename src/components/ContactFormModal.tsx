@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X } from 'lucide-react';
+import { X, QrCode } from 'lucide-react';
 import { Contact } from '../types';
 
 interface ContactFormModalProps {
@@ -110,6 +110,12 @@ export const ContactFormModal: React.FC<ContactFormModalProps> = ({ isOpen, onCl
     }
   };
 
+  const handleQRScan = () => {
+    // Placeholder for QR scanning functionality
+    // This would typically open a camera/file picker to scan QR code
+    alert('QR Code Scanner\n\nThis feature would open your camera or file picker to scan a VCF QR code and automatically populate the contact form.\n\nImplementation would use:\n- Camera API for live scanning\n- File input for QR code images\n- QR code parsing library\n- VCF parsing to extract contact data');
+  };
+
   if (!isOpen) return null;
 
   return (
@@ -196,20 +202,35 @@ export const ContactFormModal: React.FC<ContactFormModalProps> = ({ isOpen, onCl
             </div>
           </div>
           
-          <div className="flex justify-end gap-3 pt-4">
-            <button
-              type="button"
-              onClick={onClose}
-              className="px-6 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              className="px-6 py-2 bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-lg hover:from-blue-700 hover:to-purple-700 transition"
-            >
-              {mode === 'add' ? 'Add Contact' : 'Save Changes'}
-            </button>
+          <div className="flex justify-between pt-4">
+            {/* QR Scan Button - Only show in add mode */}
+            {mode === 'add' && (
+              <button
+                type="button"
+                onClick={handleQRScan}
+                className="flex items-center gap-2 px-4 py-2 border border-blue-300 text-blue-600 rounded-lg hover:bg-blue-50 transition-all duration-200 hover:scale-105"
+                title="Scan QR Code to auto-fill contact"
+              >
+                <QrCode className="w-4 h-4" />
+                <span className="hidden sm:inline">Scan QR</span>
+              </button>
+            )}
+            
+            <div className="flex gap-3">
+              <button
+                type="button"
+                onClick={onClose}
+                className="px-6 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                className="px-6 py-2 bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-lg hover:from-blue-700 hover:to-purple-700 transition"
+              >
+                {mode === 'add' ? 'Add Contact' : 'Save Changes'}
+              </button>
+            </div>
           </div>
         </form>
       </div>

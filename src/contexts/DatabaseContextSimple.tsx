@@ -704,13 +704,10 @@ export const DatabaseProvider: React.FC<DatabaseProviderProps> = ({ children }) 
         }
 
         // Load changelog from database (for admin and superadmin users)
+        // Note: loadChangelogFromDatabase will be called in a separate useEffect
+        // to avoid initialization order issues
         if (currentUser.role === 'admin' || currentUser.role === 'superadmin') {
-          try {
-            console.log('Loading changelog from database for admin/superadmin user...')
-            await loadChangelogFromDatabase()
-          } catch (error) {
-            console.warn('Failed to load changelog from database:', error)
-          }
+          console.log('Admin/superadmin user detected - changelog will be loaded separately')
         } else {
           console.log('Regular user - changelog not loaded')
         }
@@ -719,7 +716,7 @@ export const DatabaseProvider: React.FC<DatabaseProviderProps> = ({ children }) 
 
     // Load data when component mounts or user changes
     loadDataFromSupabase()
-  }, [currentUser, refreshUsers]) // Depend on currentUser and refreshUsers to reload when user changes
+  }, [currentUser, refreshUsers]) // Removed loadChangelogFromDatabase to fix initialization error
 
   const syncContactsToDatabase = async () => {
     if (!currentUser || !superAdminService) {
@@ -966,12 +963,15 @@ export const DatabaseProvider: React.FC<DatabaseProviderProps> = ({ children }) 
     return null
   }
   
-  const logout = async () => {
+  const logout = useCallback(async () => {
     console.log('🚪 Logout called - clearing user session')
     
-    // Log action before clearing user
+    // Store user info for logging after logout
     if (currentUser) {
-      await logAction('logout', 'system', `User ${currentUser.name} logged out`, currentUser.id, currentUser.name)
+      sessionStorage.setItem('pendingLogoutLog', JSON.stringify({
+        id: currentUser.id,
+        name: currentUser.name
+      }))
     }
     
     setCurrentUser(null)
@@ -1007,7 +1007,7 @@ export const DatabaseProvider: React.FC<DatabaseProviderProps> = ({ children }) 
     setTimeout(() => {
       console.log('🔄 User has been logged out successfully')
     }, 100)
-  }
+  }, [currentUser]) // Removed logAction to fix initialization order issue
   
   const createContact = async (contactData: Omit<Contact, 'id' | 'ownerId' | 'ownerName' | 'createdAt'>): Promise<Contact> => {
     if (!currentUser) throw new Error('No current user')
@@ -1296,7 +1296,7 @@ export const DatabaseProvider: React.FC<DatabaseProviderProps> = ({ children }) 
   }
   
   // Load changelog from database
-  const loadChangelogFromDatabase = async (): Promise<void> => {
+  const loadChangelogFromDatabase = useCallback(async (): Promise<void> => {
     try {
       const { data, error } = await supabase.rpc('get_changelog', {
         p_limit: 100,
@@ -1348,9 +1348,9 @@ export const DatabaseProvider: React.FC<DatabaseProviderProps> = ({ children }) 
       // Set empty changelog on error
       setChangelog([])
     }
-  }
+  }, [])
   
-  const logAction = async (
+  const logAction = useCallback(async (
     action: ChangelogEntry['action'],
     entity: ChangelogEntry['entity'],
     description: string,
@@ -1414,7 +1414,44 @@ export const DatabaseProvider: React.FC<DatabaseProviderProps> = ({ children }) 
       }
       setChangelog(prev => [...prev, newEntry])
     }
-  }
+  }, [currentUser, loadChangelogFromDatabase])
+
+  // Handle logout logging after logAction is available
+  useEffect(() => {
+    const handleLogoutLogging = async () => {
+      const logoutUser = sessionStorage.getItem('pendingLogoutLog')
+      if (logoutUser && !currentUser) {
+        try {
+          const userData = JSON.parse(logoutUser)
+          await logAction('logout', 'system', `User ${userData.name} logged out`, userData.id, userData.name)
+          sessionStorage.removeItem('pendingLogoutLog')
+          console.log('✅ Logout action logged successfully')
+        } catch (error) {
+          console.warn('Failed to log logout action:', error)
+          sessionStorage.removeItem('pendingLogoutLog')
+        }
+      }
+    }
+    
+    if (!currentUser) {
+      handleLogoutLogging()
+    }
+  }, [currentUser, logAction])
+
+  // Load changelog for admin/superadmin users after functions are initialized
+  useEffect(() => {
+    if (currentUser && (currentUser.role === 'admin' || currentUser.role === 'superadmin')) {
+      const loadInitialChangelog = async () => {
+        try {
+          console.log('Loading changelog from database for admin/superadmin user...')
+          await loadChangelogFromDatabase()
+        } catch (error) {
+          console.warn('Failed to load changelog from database:', error)
+        }
+      }
+      loadInitialChangelog()
+    }
+  }, [currentUser, loadChangelogFromDatabase])
 
   // SuperAdmin specific functions
   const createUserBySuperAdmin = async (userData: {

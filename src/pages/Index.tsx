@@ -9,8 +9,9 @@ const AuthenticatedApp: React.FC = () => {
   const { currentUser, isInitializing } = useDatabaseContext();
   const [sessionExpired, setSessionExpired] = useState(false);
   
-  console.log('Index: Current user:', currentUser);
-  console.log('Index: Is initializing:', isInitializing);
+  console.log('🔍 Index: Current user:', currentUser);
+  console.log('🔍 Index: Is initializing:', isInitializing);
+  console.log('🔍 Index: Session expired:', sessionExpired);
   
   useEffect(() => {
     // Check if user had a previous session that expired
