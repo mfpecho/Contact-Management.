@@ -88,19 +88,24 @@ export const DashboardHeader: React.FC<DashboardHeaderProps> = ({
     };
   }, [showLogoutConfirm, showUserMenu, showNotifications]);
 
-  // Calculate upcoming birthdays (within next 30 days) and collaborative birthdays (1 month before)
+  // Calculate upcoming birthdays (within next 30 days)
   useEffect(() => {
-    console.log('Calculating birthdays for contacts:', contacts.length, 'contacts loaded from database');
+    console.log('🎂 DashboardHeader: Calculating birthdays for', contacts.length, 'contacts');
     
     const today = new Date();
     today.setHours(0, 0, 0, 0); // Set to start of day for accurate comparison
     const thirtyDaysFromNow = new Date(today);
     thirtyDaysFromNow.setDate(today.getDate() + 30);
 
+    // Debug: Show date ranges
+    console.log('📅 Date ranges for birthday calculations:');
+    console.log('   Today:', today.toDateString());
+    console.log('   30 days from now:', thirtyDaysFromNow.toDateString());
+
     // Regular upcoming birthdays (next 30 days) - all contacts from database
     const upcoming = contacts.filter(contact => {
       if (!contact.birthday) {
-        console.warn('Contact missing birthday:', contact.firstName, contact.lastName);
+        console.warn('⚠️ Contact missing birthday:', contact.firstName, contact.lastName);
         return false;
       }
       
@@ -116,7 +121,7 @@ export const DashboardHeader: React.FC<DashboardHeaderProps> = ({
       
       if (isWithinNext30Days) {
         const daysUntil = Math.ceil((thisYearBirthday.getTime() - today.getTime()) / (1000 * 3600 * 24));
-        console.log(`Upcoming birthday: ${contact.firstName} ${contact.lastName} in ${daysUntil} days (${contact.birthday})`);
+        console.log(`🎉 Upcoming birthday: ${contact.firstName} ${contact.lastName} in ${daysUntil} days (${contact.birthday})`);
       }
       
       return isWithinNext30Days;
@@ -134,57 +139,14 @@ export const DashboardHeader: React.FC<DashboardHeaderProps> = ({
       return aBirthday.getTime() - bBirthday.getTime();
     });
 
-    // Collaborative birthdays (1 month before) - only contacts from other users
-    const oneMonthFromNow = new Date(today);
-    oneMonthFromNow.setDate(today.getDate() + 30);
-    const twoMonthsFromNow = new Date(today);
-    twoMonthsFromNow.setDate(today.getDate() + 60);
-
-    const collaborative = contacts
-      .filter(contact => contact.ownerId !== user.id) // Only collaborative contacts (not owned by current user)
-      .filter(contact => {
-        if (!contact.birthday) return false;
-        
-        const birthDate = new Date(contact.birthday);
-        const thisYearBirthday = new Date(today.getFullYear(), birthDate.getMonth(), birthDate.getDate());
-        
-        // If birthday already passed this year, check next year
-        if (thisYearBirthday < today) {
-          thisYearBirthday.setFullYear(today.getFullYear() + 1);
-        }
-
-        // Check if birthday is between 30-60 days from today (1 month advance notice)
-        const isCollaborativeNotice = thisYearBirthday > oneMonthFromNow && thisYearBirthday <= twoMonthsFromNow;
-        
-        if (isCollaborativeNotice) {
-          const daysUntil = Math.ceil((thisYearBirthday.getTime() - today.getTime()) / (1000 * 3600 * 24));
-          console.log(`Collaborative birthday: ${contact.firstName} ${contact.lastName} (Owner: ${contact.ownerName}) in ${daysUntil} days`);
-        }
-        
-        return isCollaborativeNotice;
-      })
-      .sort((a, b) => {
-        const aDate = new Date(a.birthday);
-        const bDate = new Date(b.birthday);
-        const thisYear = today.getFullYear();
-        
-        const aBirthday = new Date(thisYear, aDate.getMonth(), aDate.getDate());
-        const bBirthday = new Date(thisYear, bDate.getMonth(), bDate.getDate());
-        
-        if (aBirthday < today) aBirthday.setFullYear(thisYear + 1);
-        if (bBirthday < today) bBirthday.setFullYear(thisYear + 1);
-        
-        return aBirthday.getTime() - bBirthday.getTime();
-      });
-
-    console.log(`Birthday notifications summary:
+    console.log(` Birthday notifications summary:
       - Total contacts checked: ${contacts.length}
-      - Upcoming birthdays (next 30 days): ${upcoming.length}
-      - Collaborative birthdays (30-60 days): ${collaborative.length}`);
+      - Contacts with birthdays: ${contacts.filter(c => c.birthday).length}
+      - Upcoming birthdays (0-30 days): ${upcoming.length}`);
 
     setUpcomingBirthdays(upcoming);
-    setCollaborativeBirthdays(collaborative);
-  }, [contacts, user.id]);
+    setCollaborativeBirthdays([]); // Clear collaborative birthdays since we're not using them
+  }, [contacts]);
 
   // Filter VCF requests for admins and superadmins
   useEffect(() => {
@@ -359,10 +321,10 @@ export const DashboardHeader: React.FC<DashboardHeaderProps> = ({
                 </div>
                 
                 {/* Notification indicator */}
-                {(upcomingBirthdays.length > 0 || collaborativeBirthdays.length > 0 || pendingVCFRequests.length > 0) && (
+                {(upcomingBirthdays.length > 0 || pendingVCFRequests.length > 0) && (
                   <div className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 rounded-full flex items-center justify-center shadow-lg border-2 border-white dark:border-black">
                     <span className="text-white text-xs font-bold">
-                      {upcomingBirthdays.length + collaborativeBirthdays.length + pendingVCFRequests.length}
+                      {upcomingBirthdays.length + pendingVCFRequests.length}
                     </span>
                   </div>
                 )}
@@ -416,17 +378,17 @@ export const DashboardHeader: React.FC<DashboardHeaderProps> = ({
                     >
                       <div className="relative">
                         <Bell className="w-5 h-5 text-gray-600 dark:text-gray-400" />
-                        {(upcomingBirthdays.length > 0 || collaborativeBirthdays.length > 0 || pendingVCFRequests.length > 0) && (
+                        {(upcomingBirthdays.length > 0 || pendingVCFRequests.length > 0) && (
                           <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full w-4 h-4 flex items-center justify-center">
-                            {upcomingBirthdays.length + collaborativeBirthdays.length + pendingVCFRequests.length}
+                            {upcomingBirthdays.length + pendingVCFRequests.length}
                           </span>
                         )}
                       </div>
                       <div className="flex-1">
                         <p className="font-medium text-black dark:text-white">Notifications</p>
                         <p className="text-xs text-gray-600 dark:text-gray-400">
-                          {upcomingBirthdays.length + collaborativeBirthdays.length + pendingVCFRequests.length > 0 
-                            ? `${upcomingBirthdays.length + collaborativeBirthdays.length + pendingVCFRequests.length} new notifications`
+                          {upcomingBirthdays.length + pendingVCFRequests.length > 0 
+                            ? `${upcomingBirthdays.length + pendingVCFRequests.length} new notifications`
                             : 'No new notifications'
                           }
                         </p>
@@ -527,55 +489,6 @@ export const DashboardHeader: React.FC<DashboardHeaderProps> = ({
                       </div>
                     </>
                   )}
-                  
-                  {/* Collaborative Birthdays Section (1 Month Before) */}
-                  <>
-                    <div className="p-3 sm:p-4 border-b border-gray-200 dark:border-gray-700 bg-purple-50 dark:bg-purple-950">
-                      <div className="flex items-center gap-2">
-                        <Bell className="w-4 h-4 text-purple-600 flex-shrink-0" />
-                        <h3 className="font-semibold text-black dark:text-white text-sm sm:text-base">1 Month Advance Birthdays</h3>
-                      </div>
-                      <p className="text-xs sm:text-sm text-gray-600 dark:text-gray-400">Collaborative contacts birthdays</p>
-                    </div>
-                    
-                    <div className="max-h-32 sm:max-h-40 overflow-y-auto">
-                      {collaborativeBirthdays.length === 0 ? (
-                        <div className="p-3 sm:p-4 text-center text-gray-500 dark:text-gray-400 text-sm">
-                          No collaborative birthdays in the next month
-                        </div>
-                      ) : (
-                        collaborativeBirthdays.map(contact => {
-                          const daysUntil = getDaysUntilBirthday(contact.birthday);
-                          
-                          return (
-                            <div key={`collab-${contact.id}`} className="p-2 sm:p-3 border-b border-gray-100 dark:border-gray-800 last:border-b-0 hover:bg-gray-50 dark:hover:bg-gray-900 transition-colors">
-                              <div className="flex items-center justify-between">
-                                <div className="flex-1 min-w-0">
-                                  <p className="font-medium text-black dark:text-white text-sm truncate">
-                                    {contact.firstName} {contact.lastName}
-                                  </p>
-                                  <p className="text-xs sm:text-sm text-gray-600 dark:text-gray-400 truncate">
-                                    {formatBirthdayDate(contact.birthday)}
-                                  </p>
-                                  <p className="text-xs text-gray-500 dark:text-gray-500 truncate">
-                                    {contact.company} • Owner: {contact.ownerName}
-                                  </p>
-                                </div>
-                                <div className="text-right flex-shrink-0 ml-2">
-                                  <span className="text-xs sm:text-sm font-medium text-purple-600 dark:text-purple-400">
-                                    {daysUntil} days
-                                  </span>
-                                  <p className="text-xs text-purple-500 dark:text-purple-500">
-                                    1 month notice
-                                  </p>
-                                </div>
-                              </div>
-                            </div>
-                          );
-                        })
-                      )}
-                    </div>
-                  </>
                   
                   {/* Birthday Notifications Section */}
                   <div className="p-3 sm:p-4 border-b border-gray-200 dark:border-gray-700 bg-red-50 dark:bg-red-950">

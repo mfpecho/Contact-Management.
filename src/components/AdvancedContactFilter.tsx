@@ -145,19 +145,20 @@ export const AdvancedContactFilter: React.FC<AdvancedContactFilterProps> = ({
               </div>
 
               {/* Owner Filter */}
+              {/* cspell:ignore superadmin */}
               {(userRole === 'admin' || userRole === 'superadmin') && (
                 <div>
                   <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
                     <User className="w-4 h-4 inline mr-2" />
-                    Owner
+                    Creator
                   </label>
                   <select
                     value={filters.owner}
                     onChange={(e) => updateFilter('owner', e.target.value)}
                     className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500"
-                    aria-label="Filter by owner"
+                    aria-label="Filter by creator"
                   >
-                    <option value="">All Owners</option>
+                    <option value="">All Creators</option>
                     {uniqueOwners.map(owner => (
                       <option key={owner} value={owner}>{owner}</option>
                     ))}
@@ -241,7 +242,7 @@ export const AdvancedContactFilter: React.FC<AdvancedContactFilterProps> = ({
               )}
               {filters.owner && (
                 <span className="px-2 py-1 bg-blue-100 dark:bg-blue-800 text-blue-800 dark:text-blue-200 rounded-full text-xs">
-                  Owner: {filters.owner}
+                  Created by: {filters.owner}
                 </span>
               )}
               {filters.phone && (

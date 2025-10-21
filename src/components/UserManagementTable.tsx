@@ -68,8 +68,7 @@ export const UserManagementTable: React.FC<UserManagementTableProps> = ({
       password: userData.password,
       role: userData.role,
       position: userData.position,
-      employeeNumber: userData.employeeNumber,
-      avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(userData.name)}&background=3b82f6&color=fff`
+      employeeNumber: userData.employeeNumber
     };
     onAdd(newUser);
     setSuccessMessage(`✅ User "${userData.name}" has been successfully added to the Supabase database!`);

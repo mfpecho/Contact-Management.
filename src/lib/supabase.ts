@@ -353,6 +353,20 @@ export const superAdminService = {
       throw error
     }
     
+    // If authentication successful, set the authentication context
+    if (data && data.success && data.user && data.user.id) {
+      console.log('Setting authentication context for user:', data.user.id)
+      try {
+        await supabase.rpc('set_auth_context', {
+          user_id: data.user.id
+        })
+        console.log('Authentication context set successfully')
+      } catch (contextError) {
+        console.warn('Failed to set authentication context:', contextError)
+        // Don't fail authentication if context setting fails
+      }
+    }
+    
     return data
   },
 
@@ -450,18 +464,141 @@ export const superAdminService = {
   getContacts: async (userId?: string) => {
     console.log('Supabase getContacts called with userId:', userId)
     
-    const { data, error } = await supabase.rpc('get_contacts_simple', {
-      user_id_filter: userId || null
-    })
-    
-    console.log('RPC get_contacts_simple response - data:', data, 'error:', error)
-    
-    if (error) {
-      console.error('Error fetching contacts:', error)
-      throw error
+    try {
+      // Try collaborative function first (works for all user types)
+      console.log('Attempting collaborative contact fetch...')
+      
+      try {
+        const { data: collaborativeData, error: collaborativeError } = await supabase.rpc('get_all_contacts_collaborative')
+        
+        console.log('RPC get_all_contacts_collaborative response - data:', collaborativeData, 'error:', collaborativeError)
+        
+        if (!collaborativeError && collaborativeData && collaborativeData.success) {
+          console.log('✅ Collaborative contact fetch successful:', collaborativeData.count, 'contacts')
+          return collaborativeData
+        }
+      } catch (collaborativeErr) {
+        console.log('Collaborative function error:', collaborativeErr)
+      }
+      
+      // Fallback 1: Try superadmin function
+      console.log('Collaborative function failed, trying superadmin function...')
+      
+      try {
+        const { data: superadminData, error: superadminError } = await supabase.rpc('get_contacts_for_superadmin')
+        
+        console.log('RPC get_contacts_for_superadmin response - data:', superadminData, 'error:', superadminError)
+        
+        if (!superadminError && superadminData && superadminData.success) {
+          console.log('✅ Superadmin contact fetch successful:', superadminData.count, 'contacts')
+          return superadminData
+        }
+      } catch (superadminErr) {
+        console.log('Superadmin function error:', superadminErr)
+      }
+      
+      // Fallback 2: Try the original function with safe userId
+      console.log('Advanced functions failed, trying original get_contacts_simple...')
+      
+      // Ensure userId is properly handled (convert empty string to null)
+      const safeUserId = userId && userId.trim() !== '' ? userId : null
+      console.log('Using safe userId:', safeUserId, '(original:', userId, ')')
+      
+      const { data, error } = await supabase.rpc('get_contacts_simple', {
+        user_id_filter: safeUserId
+      })
+      
+      console.log('RPC get_contacts_simple response - data:', data, 'error:', error)
+      
+      if (error) {
+        console.warn('RPC function failed, trying direct table query fallback:', error)
+        throw error // This will trigger the fallback
+      }
+      
+      if (data && data.success) {
+        console.log('✅ Original function successful:', data.count || 0, 'contacts')
+        return data
+      }
+      
+      console.warn('Original function returned unsuccessful result:', data)
+      throw new Error('All RPC functions failed')  
+    } catch (rpcError) {
+      console.log('RPC function failed, using direct table query fallback')
+      
+      try {
+        // Fallback: Direct table query with JOIN
+        let query = supabase
+          .from('contacts')
+          .select(`
+            id,
+            first_name,
+            middle_name,
+            last_name,
+            birthday,
+            phone,
+            company,
+            user_id,
+            created_at,
+            users!contacts_user_id_fkey (
+              name
+            )
+          `)
+          .order('created_at', { ascending: false })
+        
+        // Apply user filter if specified
+        if (userId) {
+          query = query.eq('user_id', userId)
+          console.log('Applying user filter for userId:', userId)
+        } else {
+          console.log('Fetching all contacts (no user filter)')
+        }
+        
+        const { data: contactsData, error: queryError } = await query
+        
+        console.log('Direct table query response - data count:', contactsData?.length, 'error:', queryError)
+        
+        if (queryError) {
+          console.error('Direct table query also failed:', queryError)
+          return {
+            success: false,
+            error: 'Failed to fetch contacts: ' + queryError.message,
+            contacts: []
+          }
+        }
+        
+        // Transform the data to match the expected format
+        const transformedContacts = (contactsData || []).map(contact => {
+          const userData = Array.isArray(contact.users) ? contact.users[0] : contact.users
+          return {
+            id: contact.id,
+            firstName: contact.first_name || '',
+            middleName: contact.middle_name || '',
+            lastName: contact.last_name || '',
+            birthday: contact.birthday || '',
+            contactNumber: contact.phone || '',
+            company: contact.company || '',
+            ownerId: contact.user_id || '',
+            ownerName: userData?.name || 'Unknown User',
+            createdAt: contact.created_at || ''
+          }
+        })
+        
+        console.log('✅ Fallback successful - transformed contacts:', transformedContacts.length)
+        
+        return {
+          success: true,
+          contacts: transformedContacts,
+          count: transformedContacts.length
+        }
+      } catch (fallbackError) {
+        console.error('Both RPC and direct query failed:', fallbackError)
+        return {
+          success: false,
+          error: 'All contact fetch methods failed: ' + (fallbackError as Error).message,
+          contacts: []
+        }
+      }
     }
-    
-    return data
   },
 
   updateContact: async (contactId: string, contactData: {

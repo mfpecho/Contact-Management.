@@ -244,7 +244,7 @@ BEGIN
             'position', COALESCE(u.position, ''),
             'role', COALESCE(u.role, 'user'),
             'createdAt', COALESCE(u.created_at::text, ''),
-            'avatar', COALESCE(u.avatar, 'https://ui-avatars.com/api/?name=' || url_encode(u.name) || '&background=3b82f6&color=fff')
+            'avatar', u.avatar
         ) as user_json
         FROM users u
         ORDER BY u.created_at DESC
@@ -413,7 +413,191 @@ EXCEPTION
 END $$;
 
 -- ==============================================
--- 6. CREATE DEBUG INFORMATION FUNCTION
+-- 6. CREATE get_system_activity_summary FUNCTION
+-- ==============================================
+
+-- Create the get_system_activity_summary function for ActivityDashboard
+CREATE OR REPLACE FUNCTION get_system_activity_summary()
+RETURNS json
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+DECLARE
+    activity_result json;
+    total_users integer;
+    total_contacts integer;
+    active_users integer;
+    recent_contacts integer;
+    recent_users integer;
+BEGIN
+    -- Log the request for debugging
+    RAISE NOTICE 'get_system_activity_summary called';
+    
+    -- Get total counts
+    SELECT COUNT(*) INTO total_users FROM users;
+    SELECT COUNT(*) INTO total_contacts FROM contacts;
+    
+    -- Get active users (users who have contacts)
+    SELECT COUNT(DISTINCT user_id) INTO active_users FROM contacts WHERE user_id IS NOT NULL;
+    
+    -- Get recent activity (last 7 days)
+    SELECT COUNT(*) INTO recent_contacts 
+    FROM contacts 
+    WHERE created_at >= NOW() - INTERVAL '7 days';
+    
+    SELECT COUNT(*) INTO recent_users 
+    FROM users 
+    WHERE created_at >= NOW() - INTERVAL '7 days';
+    
+    -- Build activity summary
+    activity_result := json_build_object(
+        'totalUsers', total_users,
+        'totalContacts', total_contacts,
+        'activeUsers', active_users,
+        'recentContacts', recent_contacts,
+        'recentUsers', recent_users,
+        'averageContactsPerUser', CASE 
+            WHEN total_users > 0 THEN ROUND(total_contacts::decimal / total_users::decimal, 2)
+            ELSE 0 
+        END,
+        'lastUpdated', NOW()::text
+    );
+    
+    RAISE NOTICE 'Activity summary: users=%, contacts=%, active=%, recent_contacts=%, recent_users=%', 
+        total_users, total_contacts, active_users, recent_contacts, recent_users;
+    
+    RETURN json_build_object(
+        'success', true,
+        'data', activity_result
+    );
+    
+EXCEPTION
+    WHEN OTHERS THEN
+        RAISE NOTICE 'Error in get_system_activity_summary: %', SQLERRM;
+        RETURN json_build_object(
+            'success', false,
+            'error', 'Failed to get activity summary: ' || SQLERRM,
+            'data', json_build_object()
+        );
+END;
+$$;
+
+-- Grant permissions to activity functions
+GRANT EXECUTE ON FUNCTION get_system_activity_summary TO authenticated;
+GRANT EXECUTE ON FUNCTION get_system_activity_summary TO anon;
+
+-- Test get_system_activity_summary function
+DO $$
+DECLARE
+    test_result json;
+BEGIN
+    SELECT get_system_activity_summary() INTO test_result;
+    IF (test_result->>'success')::boolean THEN
+        RAISE NOTICE 'SUCCESS: get_system_activity_summary function is working correctly';
+        RAISE NOTICE 'Activity data: %', test_result->'data';
+    ELSE
+        RAISE NOTICE 'ERROR: get_system_activity_summary failed with: %', test_result->>'error';
+    END IF;
+EXCEPTION
+    WHEN OTHERS THEN
+        RAISE NOTICE 'ERROR: get_system_activity_summary test failed: %', SQLERRM;
+END $$;
+
+-- ==============================================
+-- 6B. CREATE get_user_activity_timeline FUNCTION
+-- ==============================================
+
+-- Create the get_user_activity_timeline function for user activity tracking
+CREATE OR REPLACE FUNCTION get_user_activity_timeline(
+    p_limit INTEGER DEFAULT 50
+)
+RETURNS json
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+DECLARE
+    timeline_result json;
+    total_count integer;
+BEGIN
+    -- Log the request for debugging
+    RAISE NOTICE 'get_user_activity_timeline called with limit: %', p_limit;
+    
+    -- Get total count of timeline entries
+    SELECT COUNT(*) INTO total_count FROM changelog;
+    
+    -- Get timeline entries from changelog
+    SELECT json_agg(timeline_json)
+    INTO timeline_result
+    FROM (
+        SELECT json_build_object(
+            'id', c.id::text,
+            'timestamp', c.timestamp::text,
+            'userId', COALESCE(c.user_id::text, ''),
+            'userName', COALESCE(c.user_name, 'System'),
+            'userRole', COALESCE(c.user_role, 'system'),
+            'action', c.action,
+            'entity', c.entity,
+            'entityId', COALESCE(c.entity_id::text, ''),
+            'entityName', COALESCE(c.entity_name, ''),
+            'description', c.description,
+            'details', COALESCE(c.details, ''),
+            'createdAt', c.created_at::text,
+            'type', 'activity'
+        ) as timeline_json
+        FROM changelog c
+        ORDER BY c.timestamp DESC
+        LIMIT p_limit
+    ) subquery;
+    
+    -- If no timeline entries found, return empty array
+    IF timeline_result IS NULL THEN
+        timeline_result := '[]'::json;
+        RAISE NOTICE 'No timeline entries found, returning empty array';
+    ELSE
+        RAISE NOTICE 'Returning % timeline entries', json_array_length(timeline_result);
+    END IF;
+    
+    RETURN json_build_object(
+        'success', true,
+        'timeline', timeline_result,
+        'total', total_count,
+        'limit', p_limit
+    );
+    
+EXCEPTION
+    WHEN OTHERS THEN
+        RAISE NOTICE 'Error in get_user_activity_timeline: %', SQLERRM;
+        RETURN json_build_object(
+            'success', false,
+            'error', 'Failed to get user activity timeline: ' || SQLERRM,
+            'timeline', '[]'::json
+        );
+END;
+$$;
+
+-- Grant permissions to user activity timeline function
+GRANT EXECUTE ON FUNCTION get_user_activity_timeline TO authenticated;
+GRANT EXECUTE ON FUNCTION get_user_activity_timeline TO anon;
+
+-- Test get_user_activity_timeline function
+DO $$
+DECLARE
+    test_result json;
+BEGIN
+    SELECT get_user_activity_timeline(20) INTO test_result;
+    IF (test_result->>'success')::boolean THEN
+        RAISE NOTICE 'SUCCESS: get_user_activity_timeline function is working correctly';
+        RAISE NOTICE 'Timeline entries found: %', (test_result->>'total')::integer;
+    ELSE
+        RAISE NOTICE 'ERROR: get_user_activity_timeline failed with: %', test_result->>'error';
+    END IF;
+EXCEPTION
+    WHEN OTHERS THEN
+        RAISE NOTICE 'ERROR: get_user_activity_timeline test failed: %', SQLERRM;
+END $$;
+
+-- ==============================================
+-- 7. CREATE DEBUG INFORMATION FUNCTION
 -- ==============================================
 
 CREATE OR REPLACE FUNCTION debug_database_functions()
@@ -451,7 +635,9 @@ BEGIN
             'get_contacts_simple', 'available',
             'get_users_simple', 'available',
             'get_changelog', 'available',
-            'log_changelog', 'available'
+            'log_changelog', 'available',
+            'get_system_activity_summary', 'available',
+            'get_user_activity_timeline', 'available'
         ),
         'timestamp', NOW()
     );
@@ -472,7 +658,7 @@ GRANT EXECUTE ON FUNCTION debug_database_functions TO authenticated;
 GRANT EXECUTE ON FUNCTION debug_database_functions TO anon;
 
 -- ==============================================
--- 7. FINAL STATUS CHECK
+-- 8. FINAL STATUS CHECK
 -- ==============================================
 
 SELECT 
@@ -485,7 +671,7 @@ SELECT
     string_agg(routine_name, ', ') as functions
 FROM information_schema.routines 
 WHERE routine_schema = 'public' 
-AND routine_name IN ('get_contacts_simple', 'get_users_simple', 'get_changelog', 'log_changelog', 'debug_database_functions');
+AND routine_name IN ('get_contacts_simple', 'get_users_simple', 'get_changelog', 'log_changelog', 'get_system_activity_summary', 'get_user_activity_timeline', 'debug_database_functions');
 
 -- Final test: Call debug function
 SELECT debug_database_functions() as final_debug_check;

@@ -58,12 +58,20 @@ interface DatabaseContextType {
 
 const DatabaseContext = createContext<DatabaseContextType | null>(null)
 
+// Custom hook to use the DatabaseContext
+export const useDatabaseContext = () => {
+  const context = useContext(DatabaseContext)
+  if (!context) {
+    throw new Error('useDatabaseContext must be used within a DatabaseProvider')
+  }
+  return context
+}
+
 interface DatabaseProviderProps {
   children: ReactNode
 }
 
 export const DatabaseProvider: React.FC<DatabaseProviderProps> = ({ children }) => {
-  console.log('DatabaseProvider: Rendering...')
   
   // Helper functions for session-based storage
   const getSessionData = (key: string) => {
@@ -108,16 +116,69 @@ export const DatabaseProvider: React.FC<DatabaseProviderProps> = ({ children }) 
   
   const [currentUser, setCurrentUser] = useState<User | null>(null)
 
-  console.log('DatabaseProvider: Current user:', currentUser)
 
   // Simple mock implementations
   const refreshUsers = useCallback(async () => { 
-    console.log('refreshUsers called - fetching from database...')
     setUsersLoading(true)
     
     try {
-      // Try to fetch users from database using the new function
-      const { data, error } = await supabase.rpc('get_users_simple')
+      // Try the new admin function first, fall back to simple function if not available
+      let data, error
+      
+      const adminResult = await supabase.rpc('get_users_for_admin')
+      
+      // Check if the function doesn't exist (404 or PGRST202 error)
+      if (adminResult.error && (
+          adminResult.error.code === 'PGRST202' || 
+          adminResult.error.message.includes('Could not find the function')
+        )) {
+        const fallbackResult = await supabase.rpc('get_users_simple')
+        
+        // If get_users_simple also fails (url_encode error), fall back to direct table query
+        if ((fallbackResult.error && fallbackResult.error.message.includes('url_encode')) ||
+            (fallbackResult.data && fallbackResult.data.error && fallbackResult.data.error.includes('url_encode'))) {
+          console.log('get_users_simple has url_encode error, falling back to direct table query...')
+          
+          // Direct table query as final fallback
+          const { data: usersData, error: tableError } = await supabase
+            .from('users')
+            .select('*')
+            .order('created_at', { ascending: false })
+          
+          if (tableError) {
+            console.error('Direct table query error:', tableError)
+            throw tableError
+          }
+          
+          // Transform table data to match expected format
+          data = {
+            success: true,
+            users: usersData.map(user => ({
+              id: user.id,
+              name: user.name,
+              email: user.email,
+              username: user.username,
+              role: user.role,
+              employeeNumber: user.employee_number,
+              position: user.position,
+              avatar: user.avatar,
+              createdAt: user.created_at,
+              password: '' // Don't expose password
+            })),
+            count: usersData.length
+          }
+          error = null
+          
+          console.log('✅ Direct table query successful, found', usersData.length, 'users')
+        } else {
+          data = fallbackResult.data
+          error = fallbackResult.error
+        }
+      } else {
+        // Use admin function result
+        data = adminResult.data
+        error = adminResult.error
+      }
       
       if (error) {
         console.error('Error fetching users from database:', error)
@@ -156,6 +217,49 @@ export const DatabaseProvider: React.FC<DatabaseProviderProps> = ({ children }) 
           - Database sync: ✅ Complete`)
       } else {
         console.warn('⚠️ No users returned or error occurred:', data?.error || 'Unknown error')
+        
+        // Check if this is a url_encode error that we can fix with direct table query
+        if (data?.error && data.error.includes('url_encode')) {
+          console.log('🔧 Detected url_encode error in response, trying direct table query...')
+          
+          try {
+            // Direct table query as emergency fallback
+            const { data: usersData, error: tableError } = await supabase
+              .from('users')
+              .select('*')
+              .order('created_at', { ascending: false })
+            
+            if (!tableError && usersData && usersData.length > 0) {
+              // Transform table data to match expected format
+              const transformedUsers = usersData.map(user => ({
+                id: user.id,
+                name: user.name,
+                email: user.email,
+                username: user.username,
+                role: user.role,
+                employeeNumber: user.employee_number,
+                position: user.position,
+                avatar: user.avatar,
+                createdAt: user.created_at,
+                password: '' // Don't expose password
+              }))
+              
+              console.log('✅ Emergency direct table query successful, found', usersData.length, 'users')
+              
+              // Update state with users
+              setUsers(transformedUsers)
+              
+              // Sync with session storage
+              setSessionData('users', JSON.stringify(transformedUsers))
+              setSessionData('lastUserSync', new Date().toISOString())
+              
+              console.log('✅ Users state and session storage updated via emergency fallback')
+              return // Exit successfully
+            }
+          } catch (emergencyError) {
+            console.error('❌ Emergency table query also failed:', emergencyError)
+          }
+        }
         
         // Try to load from sessionStorage as fallback
         const cachedUsers = getSessionData('users')
@@ -213,11 +317,12 @@ export const DatabaseProvider: React.FC<DatabaseProviderProps> = ({ children }) 
     try {
       setContactsLoading(true)
       console.log('📡 Fetching latest contacts from database for user:', currentUser.id, currentUser.role)
+      console.log('🔐 User details:', { id: currentUser.id, role: currentUser.role, email: currentUser.email || 'no-email' })
       
-      // For regular users, fetch only their contacts
-      // For admins and superadmins, fetch all contacts
-      const userId = currentUser.role === 'user' ? currentUser.id : undefined
-      console.log('🔍 Using userId filter:', userId, '(undefined means fetch all contacts)')
+      // All users now fetch all contacts (collaborative view)
+      // This ensures everyone sees the same collaborative contacts
+      const userId = undefined // Fetch all contacts for all user types
+      console.log('🔍 Using userId filter:', userId, '(undefined means fetch all contacts - collaborative view for ALL users including SUPERADMIN)')
       
       const result = await superAdminService.getContacts(userId)
       console.log('📥 Database response:', { success: result?.success, contactCount: result?.contacts?.length, error: result?.error })
@@ -229,7 +334,7 @@ export const DatabaseProvider: React.FC<DatabaseProviderProps> = ({ children }) 
         if (result.contacts.length > 0) {
           console.log('📋 Sample contacts from database:')
           result.contacts.slice(0, 3).forEach((contact, index) => {
-            console.log(`  ${index + 1}. ${contact.firstName} ${contact.lastName} (Owner: ${contact.ownerName}, ID: ${contact.ownerId})`)
+            console.log(`  ${index + 1}. ${contact.firstName} ${contact.lastName} (Created by: ${contact.ownerName}, ID: ${contact.ownerId})`)
           })
         }
         
@@ -539,10 +644,10 @@ export const DatabaseProvider: React.FC<DatabaseProviderProps> = ({ children }) 
           console.log('Current user role:', currentUser.role)
           console.log('Current user ID:', currentUser.id)
           
-          // For regular users, fetch only their contacts
-          // For admins and superadmins, fetch all contacts
-          const userId = currentUser.role === 'user' ? currentUser.id : undefined
-          console.log('Fetching contacts with userId filter:', userId)
+          // All users should see all contacts (collaborative view)
+          // This ensures everyone sees the same collaborative contacts
+          const userId = undefined // Always fetch all contacts for collaborative viewing
+          console.log('Fetching contacts with userId filter:', userId, '(undefined = collaborative view for all users including superadmin)')
           
           const contactsResult = await superAdminService.getContacts(userId)
           console.log('Raw Supabase contacts result:', contactsResult)
@@ -1335,29 +1440,57 @@ export const DatabaseProvider: React.FC<DatabaseProviderProps> = ({ children }) 
     }
 
     try {
-      // Call Supabase function to create user in database
-      console.log('Calling Supabase createUser with data:', {
-        email: userData.email,
-        name: userData.name,
-        username: userData.username,
-        employee_number: userData.employeeNumber,
-        position: userData.position,
-        role: userData.role
+      // Try to use the new admin function first, fall back to superAdminService if not available
+      let result, error
+      
+      console.log('Trying create_user_by_admin function...')
+      
+      // Hash password (in production you should use proper bcrypt hashing)
+      const passwordHash = `$2b$10$${userData.password.slice(0, 22)}`
+      
+      const adminResponse = await supabase.rpc('create_user_by_admin', {
+        p_name: userData.name,
+        p_email: userData.email,
+        p_username: userData.username,
+        p_password_hash: passwordHash,
+        p_role: userData.role,
+        p_employee_number: userData.employeeNumber,
+        p_position: userData.position,
+        p_avatar: null
       })
       
-      const result = await superAdminService.createUser({
-        email: userData.email,
-        password: userData.password,
-        name: userData.name,
-        username: userData.username,
-        employee_number: userData.employeeNumber,
-        position: userData.position,
-        role: userData.role
-      })
+      // Check if the function doesn't exist (404 or PGRST202 error)
+      if (adminResponse.error && (
+          adminResponse.error.code === 'PGRST202' || 
+          adminResponse.error.message.includes('Could not find the function')
+        )) {
+        console.log('create_user_by_admin not available, falling back to superAdminService...')
+        
+        result = await superAdminService.createUser({
+          email: userData.email,
+          password: userData.password,
+          name: userData.name,
+          username: userData.username,
+          employee_number: userData.employeeNumber,
+          position: userData.position,
+          role: userData.role
+        })
+        
+        error = null
+      } else {
+        // Use admin function result
+        result = adminResponse.data
+        error = adminResponse.error
+      }
 
-      console.log('Supabase createUser result:', result)
+      if (error) {
+        console.error('Error calling user creation function:', error)
+        throw error
+      }
 
-      // Check if Supabase creation was successful
+      console.log('create_user_by_admin result:', result)
+
+      // Check if database creation was successful
       if (result && result.success) {
         // Create user object for local state
         const newUser: User = {
@@ -1368,45 +1501,31 @@ export const DatabaseProvider: React.FC<DatabaseProviderProps> = ({ children }) 
           password: '', // Don't store password in frontend
           role: userData.role,
           position: userData.position,
-          employeeNumber: userData.employeeNumber,
-          avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(userData.name)}&background=3b82f6&color=fff`
+          employeeNumber: userData.employeeNumber
         }
 
         // Update local state immediately for UI responsiveness
         setUsers(prev => [...prev, newUser])
         
-        // Also refresh users from Supabase to ensure data consistency
+        // Refresh users from database using the new refreshUsers function
         try {
-          const refreshedUsers = await superAdminService.getAllUsers()
-          if (refreshedUsers && refreshedUsers.length > 0) {
-            const convertedUsers: User[] = refreshedUsers.map(dbUser => ({
-              id: dbUser.id,
-              name: dbUser.name,
-              email: dbUser.email,
-              username: dbUser.username,
-              password: '', // Never expose password
-              role: dbUser.role as UserRole,
-              position: dbUser.position,
-              employeeNumber: dbUser.employee_number,
-              avatar: dbUser.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(dbUser.name)}&background=3b82f6&color=fff`
-            }))
-            setUsers(convertedUsers)
-            console.log('Users list refreshed from Supabase after user creation')
-          }
+          console.log('🔄 Refreshing users list from database after user creation...')
+          await refreshUsers()
+          console.log('✅ Users list refreshed successfully after user creation')
         } catch (refreshError) {
-          console.warn('Failed to refresh users list after creation:', refreshError)
+          console.warn('⚠️ Failed to refresh users list after creation:', refreshError)
           // Continue with local state update if refresh fails
         }
         
         // Log the action
         await logAction('create', 'user', `Created new ${userData.role} user: ${userData.name}`, newUser.id, userData.name)
         
-        console.log('User successfully created in Supabase and saved to database:', result)
+        console.log('User successfully created in database:', result)
         return newUser
       } else {
-        // Handle Supabase error
+        // Handle database error
         const errorMessage = result?.error || 'Failed to create user in database'
-        console.error('Supabase user creation failed:', errorMessage)
+        console.error('Database user creation failed:', errorMessage)
         throw new Error(errorMessage)
       }
     } catch (error) {
@@ -1414,9 +1533,10 @@ export const DatabaseProvider: React.FC<DatabaseProviderProps> = ({ children }) 
       
       // Enhanced error handling
       if (error instanceof Error) {
-        if (error.message.includes('function create_user_simple') || error.message.includes('does not exist')) {
-          console.error('❌ Database function create_user_simple does not exist. Please run the SQL schema file.')
-          throw new Error('Database function not found. Please ensure the Supabase schema has been applied.')
+        if (error.message.includes('function create_user_by_admin') || error.message.includes('does not exist')) {
+          console.error('❌ Database function create_user_by_admin does not exist. Falling back to existing method.')
+          console.log('💡 Apply admin-user-view-permissions.sql script for improved user management.')
+          // Don't throw error, let it fall back to superAdminService
         }
         
         if (error.message.includes('permission denied') || error.message.includes('authentication')) {
@@ -1612,10 +1732,4 @@ export const DatabaseProvider: React.FC<DatabaseProviderProps> = ({ children }) 
   )
 }
 
-export const useDatabaseContext = () => {
-  const context = useContext(DatabaseContext)
-  if (!context) {
-    throw new Error('useDatabaseContext must be used within a DatabaseProvider')
-  }
-  return context
-}
+export { DatabaseContext }

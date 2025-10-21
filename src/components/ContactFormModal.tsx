@@ -61,10 +61,9 @@ export const ContactFormModal: React.FC<ContactFormModalProps> = ({ isOpen, onCl
       newErrors.lastName = 'Last name must be less than 50 characters';
     }
     
-    if (!formData.birthday) {
-      newErrors.birthday = 'Birthday is required';
-    } else {
-      // Validate date format and reasonable range
+    // Birthday validation - optional field
+    if (formData.birthday && formData.birthday.trim() !== '') {
+      // Validate date format and reasonable range only if birthday is provided
       const selectedDate = new Date(formData.birthday);
       const today = new Date();
       const minDate = new Date(1900, 0, 1);
@@ -161,7 +160,7 @@ export const ContactFormModal: React.FC<ContactFormModalProps> = ({ isOpen, onCl
             </div>
             
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Birthday *</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Birthday (Optional)</label>
               <input
                 type="date"
                 value={formData.birthday}

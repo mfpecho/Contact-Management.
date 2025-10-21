@@ -3,7 +3,6 @@ import { createRoot } from 'react-dom/client'
 import App from './App.tsx'
 import './index.css'
 
-console.log('main.tsx: Starting app...')
 
 // Expose debugging functions globally for development
 if (import.meta.env.DEV) {
@@ -21,10 +20,8 @@ if (import.meta.env.DEV) {
     }
     
     w.testAuth = async (email: string, password: string) => {
-      console.log('Testing authentication for:', email)
       try {
         const result = await superAdminService.authenticateUser(email, password)
-        console.log('Auth result:', result)
         return result
       } catch (error) {
         console.error('Auth error:', error)
@@ -33,10 +30,8 @@ if (import.meta.env.DEV) {
     }
     
     w.debugUser = async (email: string) => {
-      console.log('Debugging user:', email)
       try {
         const result = await superAdminService.debugUserAuth(email)
-        console.log('Debug result:', result)
         return result
       } catch (error) {
         console.error('Debug error:', error)
@@ -45,7 +40,6 @@ if (import.meta.env.DEV) {
     }
     
     w.createTestUser = async (email: string, password: string, name: string) => {
-      console.log('Creating test user:', email)
       try {
         const result = await superAdminService.createUser({
           email,
@@ -56,7 +50,6 @@ if (import.meta.env.DEV) {
           position: 'Test Position',
           role: 'user'
         })
-        console.log('Create result:', result)
         return result
       } catch (error) {
         console.error('Create error:', error)
@@ -65,7 +58,6 @@ if (import.meta.env.DEV) {
     }
     
     w.createTestContact = async (firstName: string, lastName: string, phone: string, company: string, userId?: string) => {
-      console.log('Creating test contact:', firstName, lastName)
       try {
         // Create a birthday 15 days from now for testing notifications
         const birthdayDate = new Date()
@@ -81,7 +73,6 @@ if (import.meta.env.DEV) {
           userId: userId || 'default-user-id',
           middleName: ''
         })
-        console.log('Contact create result:', result)
         return result
       } catch (error) {
         console.error('Contact create error:', error)
@@ -90,7 +81,6 @@ if (import.meta.env.DEV) {
     }
     
     w.createBirthdayTestContact = async (firstName: string, lastName: string, daysFromNow: number, userId?: string) => {
-      console.log(`Creating test contact with birthday in ${daysFromNow} days:`, firstName, lastName)
       try {
         // Create a birthday with specific days from now
         const birthdayDate = new Date()
@@ -106,7 +96,6 @@ if (import.meta.env.DEV) {
           userId: userId || 'default-user-id',
           middleName: ''
         })
-        console.log('Birthday test contact result:', result)
         return result
       } catch (error) {
         console.error('Birthday test contact error:', error)
@@ -243,12 +232,12 @@ if (import.meta.env.DEV) {
           // Show sample contacts from both sources
           console.log('\n📋 Sample database contacts:')
           dbResult.contacts.slice(0, 3).forEach((contact, i) => {
-            console.log(`  ${i + 1}. ${contact.firstName} ${contact.lastName} (Owner: ${contact.ownerName})`)
+            console.log(`  ${i + 1}. ${contact.firstName} ${contact.lastName} (Created by: ${contact.ownerName})`)
           })
           
           console.log('\n📋 Sample localStorage contacts:')
           parsedLocalContacts.slice(0, 3).forEach((contact, i) => {
-            console.log(`  ${i + 1}. ${contact.firstName} ${contact.lastName} (Owner: ${contact.ownerName})`)
+            console.log(`  ${i + 1}. ${contact.firstName} ${contact.lastName} (Created by: ${contact.ownerName})`)
           })
           
           // Check for personal vs collaborative

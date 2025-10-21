@@ -119,7 +119,7 @@ const formatBirthdayDate = (birthday: string) => {
                           {contact.firstName} {contact.lastName}
                         </h4>
                         <p className="text-sm text-red-700 dark:text-red-300">
-                          {contact.company} • Owner: {contact.ownerName}
+                          {contact.company} • Created by: {contact.ownerName}
                         </p>
                         <p className="text-xs text-red-600 dark:text-red-400 mt-1">
                           Born: {formatBirthdayDate(contact.birthday)}
@@ -178,7 +178,7 @@ const formatBirthdayDate = (birthday: string) => {
                               ? 'text-orange-700 dark:text-orange-300' 
                               : 'text-gray-600 dark:text-gray-400'
                           }`}>
-                            {contact.company} • Owner: {contact.ownerName}
+                            {contact.company} • Created by: {contact.ownerName}
                           </p>
                           <p className={`text-xs mt-1 ${
                             isThisWeek 
@@ -232,7 +232,7 @@ const formatBirthdayDate = (birthday: string) => {
                             {contact.firstName} {contact.lastName}
                           </h4>
                           <p className="text-sm text-indigo-700 dark:text-indigo-300">
-                            {contact.company} • Owner: {contact.ownerName}
+                            {contact.company} • Created by: {contact.ownerName}
                           </p>
                           <p className="text-xs text-indigo-600 dark:text-indigo-400 mt-1">
                             Born: {formatBirthdayDate(contact.birthday)}
@@ -276,7 +276,7 @@ const formatBirthdayDate = (birthday: string) => {
                             {contact.firstName} {contact.lastName}
                           </h4>
                           <p className="text-sm text-green-700 dark:text-green-300">
-                            {contact.company} • Owner: {contact.ownerName}
+                            {contact.company} • Created by: {contact.ownerName}
                           </p>
                           <p className="text-xs text-green-600 dark:text-green-400 mt-1">
                             Born: {formatBirthdayDate(contact.birthday)}
@@ -565,17 +565,38 @@ export const BirthdayBox: React.FC<BirthdayBoxProps> = ({ contacts, currentUserI
     setPersonalBirthdays(personalUpcoming);
 
     // Debug logging
-    console.log(`BirthdayBox calculations:
+    const contactsWithBirthdays = contacts.filter(c => c.birthday && c.birthday.trim() !== '');
+    const contactsWithoutBirthdays = contacts.filter(c => !c.birthday || c.birthday.trim() === '');
+    
+    console.log(`🎂 BirthdayBox Debug Analysis:
       - Total contacts: ${contacts.length}
+      - Contacts with birthdays: ${contactsWithBirthdays.length}
+      - Contacts without birthdays: ${contactsWithoutBirthdays.length}
       - Today's birthdays: ${todaysBirthdays.length}
       - Upcoming birthdays (0-30 days): ${upcoming.length}
       - 1 Month Advance birthdays (30-60 days): ${oneMonthAdvance.length}
       - Personal birthdays: ${personalUpcoming.length}
       - Collaborative birthdays (30-60 days): ${collaborativeUpcoming.length}`);
     
+    // Log sample birthday data for debugging
+    if (contactsWithBirthdays.length > 0) {
+      console.log('📅 Sample birthday data:');
+      contactsWithBirthdays.slice(0, 3).forEach((contact, index) => {
+        console.log(`   ${index + 1}. ${contact.firstName} ${contact.lastName}: "${contact.birthday}" (Type: ${typeof contact.birthday})`);
+      });
+    } else {
+      console.log('❌ No contacts found with birthday data');
+    }
+    
+    if (todaysBirthdays.length > 0) {
+      console.log('🎉 Today\'s birthdays:', todaysBirthdays.map(c => 
+        `${c.firstName} ${c.lastName} (${c.birthday})`
+      ));
+    }
+    
     if (collaborativeUpcoming.length > 0) {
-      console.log('Collaborative birthdays:', collaborativeUpcoming.map(c => 
-        `${c.firstName} ${c.lastName} (Owner: ${c.ownerName}, Birthday: ${c.birthday})`
+      console.log('🤝 Collaborative birthdays:', collaborativeUpcoming.map(c => 
+        `${c.firstName} ${c.lastName} (Created by: ${c.ownerName}, Birthday: ${c.birthday})`
       ));
     }
   }, [contacts, currentUserId]);

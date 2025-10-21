@@ -273,20 +273,20 @@ END:VCARD`;
                     </select>
                   </div>
 
-                  {/* Owner Filter */}
+                  {/* Creator Filter */}
                   <div>
                     <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
                       <User className="w-4 h-4 inline mr-1" />
-                      Contact Owner
+                      Contact Creator
                     </label>
                     <select
                       value={ownerFilter}
                       onChange={(e) => setOwnerFilter(e.target.value)}
                       className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500"
-                      title="Filter by contact owner"
-                      aria-label="Filter contacts by owner"
+                      title="Filter by contact creator"
+                      aria-label="Filter contacts by creator"
                     >
-                      <option value="">All Owners</option>
+                      <option value="">All Creators</option>
                       {uniqueOwners.map(owner => (
                         <option key={owner} value={owner}>{owner}</option>
                       ))}
@@ -394,12 +394,12 @@ END:VCARD`;
           {ownerFilter && (
             <div className="inline-flex items-center gap-1 px-3 py-1 bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200 rounded-full text-sm">
               <User className="w-3 h-3" />
-              Owner: {ownerFilter}
+              Created by: {ownerFilter}
               <button
                 onClick={() => setOwnerFilter('')}
                 className="ml-1 text-green-600 hover:text-green-800 dark:text-green-300 dark:hover:text-green-100"
-                title="Remove owner filter"
-                aria-label="Remove owner filter"
+                title="Remove creator filter"
+                aria-label="Remove creator filter"
               >
                 <X className="w-3 h-3" />
               </button>

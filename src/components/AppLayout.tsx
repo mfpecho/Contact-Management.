@@ -377,10 +377,10 @@ export default function AppLayout() {
               <button
                 onClick={() => setIsHeroHidden(false)}
                 className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition border border-blue-500 shadow-sm hover:shadow-md"
-                title="Show Hero Section"
+                title="Show Dashboard"
               >
                 <Eye className="w-4 h-4" />
-                Show Hero Section
+                Show Dashboard
               </button>
             </div>
           </div>
@@ -425,24 +425,6 @@ export default function AppLayout() {
               </div>
               
               <div className="flex items-center gap-3">
-                {/* Debug Sync Button - only for Admin and SuperAdmin in development */}
-                {import.meta.env.DEV && (currentUser.role === 'admin' || currentUser.role === 'superadmin') && (
-                  <button
-                    onClick={async () => {
-                      console.log('🔄 Manual contact sync triggered...')
-                      try {
-                        await syncContactsToDatabase()
-                        console.log('✅ Manual sync completed')
-                      } catch (error) {
-                        console.error('❌ Manual sync failed:', error)
-                      }
-                    }}
-                    className="flex items-center justify-center gap-2 px-3 py-2 bg-yellow-600 hover:bg-yellow-700 text-white rounded-lg transition border border-yellow-500 text-sm"
-                    title="Force sync contacts with database (Admin/SuperAdmin only)"
-                  >
-                    🔄
-                  </button>
-                )}
                 
                 {/* Add Contact Button */}
                 <button
@@ -503,21 +485,6 @@ export default function AppLayout() {
           <div>
             <div className="flex justify-between items-center mb-4 sm:mb-6">
               <h2 className="text-xl sm:text-2xl font-bold text-black dark:text-white">Collaborative Contacts ({contacts.length})</h2>
-              {/* Debug button for collaborative view - only for Admin and SuperAdmin */}
-              {import.meta.env.DEV && (currentUser.role === 'admin' || currentUser.role === 'superadmin') && (
-                <button
-                  onClick={async () => {
-                    console.log('🔄 Debug collaborative contacts...')
-                    console.log('Total contacts:', contacts.length)
-                    console.log('All contacts:', contacts.map(c => ({ name: `${c.firstName} ${c.lastName}`, owner: c.ownerName, ownerId: c.ownerId })))
-                    await syncContactsToDatabase()
-                  }}
-                  className="px-3 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg transition border border-purple-500 text-sm"
-                  title="Debug collaborative contacts (Admin/SuperAdmin only)"
-                >
-                  🔍 Debug
-                </button>
-              )}
             </div>
             <CollaborativeTable
               contacts={contacts}

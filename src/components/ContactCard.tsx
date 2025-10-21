@@ -24,7 +24,7 @@ export const ContactCard: React.FC<ContactCardProps> = ({ contact, currentUserId
             <h3 className="text-xl font-bold text-black dark:text-white mb-1">
               {contact.firstName} {contact.middleName} {contact.lastName}
             </h3>
-            <p className="text-sm text-gray-500 dark:text-gray-400">Added by {contact.ownerName}</p>
+            <p className="text-sm text-gray-500 dark:text-gray-400">Created by {contact.ownerName}</p>
           </div>
           
           <div className="flex gap-2">
