@@ -122,7 +122,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLogin, sessionExpired })
                   Welcome Back
                 </h2>
                 <p className="text-sm text-gray-600">
-                  {sessionExpired ? 'Neural link expired. Re-establish connection.' : 'Initialize secure neural handshake'}
+                  {sessionExpired ? 'Neural link expired. Re-establish connection.' : 'Input email and password to continue.'}
                 </p>
               </div>
               
