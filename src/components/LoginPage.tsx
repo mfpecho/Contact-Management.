@@ -206,12 +206,12 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLogin, sessionExpired })
                     {isLoading ? (
                       <>
                         <div className="w-4 h-4 lg:w-5 lg:h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
-                        <span>Establishing Neural Link...</span>
+                        <span>Signing in...</span>
                       </>
                     ) : (
                       <>
                         <Lock className="w-4 h-4 lg:w-5 lg:h-5" />
-                        <span>Initialize Connection</span>
+                        <span>Sign in</span>
                       </>
                     )}
                   </div>
