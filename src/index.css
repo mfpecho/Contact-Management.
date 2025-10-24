@@ -15,6 +15,53 @@
   }
 }
 
+/* Futuristic Animations */
+@keyframes scanLine {
+  0% { 
+    top: 0%; 
+    opacity: 0; 
+  }
+  50% { 
+    opacity: 1; 
+  }
+  100% { 
+    top: 100%; 
+    opacity: 0; 
+  }
+}
+
+@keyframes colorBlend {
+  0% { 
+    opacity: 0.1;
+    transform: rotate(0deg);
+  }
+  25% { 
+    opacity: 0.3;
+    transform: rotate(90deg);
+  }
+  50% { 
+    opacity: 0.2;
+    transform: rotate(180deg);
+  }
+  75% { 
+    opacity: 0.4;
+    transform: rotate(270deg);
+  }
+  100% { 
+    opacity: 0.1;
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes rotate {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 @layer base {
   :root {
     --background: 210 40% 98%;
